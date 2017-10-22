@@ -2,6 +2,7 @@ package snic
 
 import (
 	"bytes"
+	"io"
 	"testing"
 )
 
@@ -31,8 +32,8 @@ func TestNextRune(t *testing.T) {
 			if !l.eof {
 				t.Error("Expected EOF after test case")
 			}
-			if got_err != nil {
-				t.Errorf("Expected nil error after test case, got %s", got_err)
+			if got_err != io.EOF {
+				t.Errorf("Expected EOF error after test case, got %s", got_err)
 			}
 		})
 	}
@@ -127,7 +128,7 @@ func TestReadComment(t *testing.T) {
 		input string
 		value string
 		err   error
-		// Next run after a call to nextRune().
+		// Next rune after a call to nextRune().
 		next   rune
 		is_eof bool
 	}{
@@ -147,13 +148,95 @@ func TestReadComment(t *testing.T) {
 			}
 			err = l.nextRune()
 			if err != nil {
-				t.Errorf("Unexpected error: %s", err)
+				if err != io.EOF {
+					t.Errorf("Unexpected error: %s", err)
+				}
 			}
 			if l.curr != fixture.next {
 				t.Errorf("Expected %q; got %q", fixture.next, l.curr)
 			}
 			if l.eof != fixture.is_eof {
-				t.Errorf("Expected EOF = %s, got EOF = %s", fixture.is_eof, l.eof)
+				t.Errorf("Expected EOF = %t, got EOF = %t", fixture.is_eof, l.eof)
+			}
+			if fixture.is_eof && err != io.EOF {
+				t.Error("Expected EOF error")
+			}
+		})
+	}
+}
+
+func TestReadNumber(t *testing.T) {
+	fixtures := []struct {
+		name      string
+		input     string
+		tokenType TokenType
+		value     string
+		err       error
+		// Next rune after a call to nextRune().
+		next rune
+	}{
+		{"Integer", "123 4", INTEGER, "123", nil, ' '},
+		{"Decimal", "1.23\n", DECIMAL, "1.23", nil, '\n'},
+		{"DecimalNoExponent", "12.", DECIMAL, "12.", io.EOF, '\u0000'},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			l := NewLexer(bytes.NewReader([]byte(fixture.input)))
+			tokenType, value, err := l.readNumber()
+			if tokenType != fixture.tokenType {
+				t.Errorf("Expected token type %d; got %d", fixture.tokenType, tokenType)
+			}
+			if value != fixture.value {
+				t.Errorf("Expected value %q; got %q", fixture.value, value)
+			}
+			if err != fixture.err {
+				t.Errorf("Expected %s; got %s", fixture.err, err)
+			}
+			err = l.nextRune()
+			if err != nil && err != io.EOF {
+				t.Errorf("Unexpected error: %s", err)
+			}
+			if l.curr != fixture.next {
+				t.Errorf("Expected %q; got %q", fixture.next, l.curr)
+			}
+		})
+	}
+}
+
+func TestReadString(t *testing.T) {
+	fixtures := []struct {
+		name      string
+		input     string
+		value     string
+		errString string
+		// Next rune after a call to nextRune().
+		next rune
+	}{
+		{"Simple", `"foo" `, "foo", "", ' '},
+		{"UnterminatedString", `"foo`, "foo", "expecting end-of-string; got EOF", '\u0000'},
+		{"BasicEscapes", `"\t\n\\\"foo\"" `, "\t\n\\\"foo\"", "", ' '},
+		{"IllegalEscape", `"\g" `, "", "illegal escape code: \\g", '"'},
+		{"UnterminatedEscape", `"foo\`, "foo", "expected escaped character; got EOF", '\u0000'},
+		{"UnicodeEscapes", `"\u0020- \u03a9, \u03C9" `, " - Ω, ω", "", ' '},
+		{"BadHex", `"\ufoobar`, "", "expected hexadecimal digit; got o", 'o'},
+		{"UnterminatedHex", `"\ufff`, "", "expected hexadecimal digit; got EOF", '\u0000'},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			l := NewLexer(bytes.NewReader([]byte(fixture.input)))
+			value, err := l.readEscapedString()
+			if value != fixture.value {
+				t.Errorf("Expected value %q; got %q", fixture.value, value)
+			}
+			if fixture.errString != "" && err.Error() != fixture.errString {
+				t.Errorf("Expected %s; got %s", fixture.errString, err)
+			}
+			err = l.nextRune()
+			if err != nil && err != io.EOF {
+				t.Errorf("Unexpected error: %s", err)
+			}
+			if l.curr != fixture.next {
+				t.Errorf("Expected %q; got %q", fixture.next, l.curr)
 			}
 		})
 	}
