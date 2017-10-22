@@ -127,10 +127,10 @@ func (l *Lexer) Next() (Token, error) {
 		}
 	case '-':
 		// Negative number. Read.
+		err = l.unreadRune()
 		if err == nil {
 			tokenType, contents, err = l.readNumber()
 		}
-		// TODO: Handle negative.
 	case '_':
 		// Key or underscore literal.
 		// TODO: Read key, and check for PLACEHOLDER_VALUE instead.
@@ -222,7 +222,7 @@ func (l *Lexer) readEscapedString() (string, error) {
 	}
 	if l.curr != '"' {
 		// Shouldn't happen unless readEscapedString is called incorrectly.
-		return "", fmt.Errorf("Unexpected character at start of string: %c", l.curr)
+		return "", fmt.Errorf("Unexpected character at start of string: %q", l.curr)
 	}
 	// Reasonable string length. Note that append will resize as-needed anyway.
 	value := make([]rune, 0, 100)
@@ -230,9 +230,10 @@ func (l *Lexer) readEscapedString() (string, error) {
 		// Handle escapes.
 		if l.curr == '\\' {
 			err = l.nextRune()
-			if err == io.EOF {
-				return string(value), fmt.Errorf("expected escaped character; got EOF")
-			} else if err != nil {
+			if err != nil {
+				if err == io.EOF {
+					err = fmt.Errorf("expected escaped character; got EOF")
+				}
 				return string(value), err
 			}
 			switch l.curr {
@@ -273,7 +274,7 @@ func (l *Lexer) readHexEscape() (rune, error) {
 		err := l.nextRune()
 		if err != nil {
 			if err == io.EOF {
-				return '\u0000', errors.New("expected hexadecimal digit; got EOF")
+				err = errors.New("expected hexadecimal digit; got EOF")
 			}
 			return '\u0000', err
 		}
@@ -282,7 +283,7 @@ func (l *Lexer) readHexEscape() (rune, error) {
 			'B', 'C', 'D', 'E', 'F':
 			chars[i] = l.curr
 		default:
-			return '\u0000', fmt.Errorf("expected hexadecimal digit; got %c", l.curr)
+			return '\u0000', fmt.Errorf("expected hexadecimal digit; got %q", l.curr)
 		}
 	}
 	result, err := hex.DecodeString(string(chars))
@@ -310,25 +311,85 @@ func (l *Lexer) readWhitespace() (string, error) {
 // error are returned.
 func (l *Lexer) readNumber() (TokenType, string, error) {
 	value := make([]rune, 0, 10)
-	var err error = nil
-	// Read integral portion.
-	for err = l.nextRune(); err == nil && unicode.IsDigit(l.curr); err = l.nextRune() {
-		value = append(value, l.curr)
-	}
-	if l.curr != '.' {
-		// Integer. Replace read character.
-		l.unreadRune()
-		return INTEGER, string(value), err
-	}
+	err := l.nextRune()
 	if err != nil {
+		return INTEGER, "", err
+	}
+
+	// Optional negative sign.
+	if l.curr == '-' {
+		value = append(value, l.curr)
+		err = l.nextRune()
+		if err != nil {
+			if err == io.EOF {
+				err = errors.New("expected digit; got EOF")
+			}
+			return INTEGER, "", err
+		}
+	}
+
+	// Require leading digit.
+	if !unicode.IsDigit(l.curr) {
+		return INTEGER, "", fmt.Errorf("illegal start of number: %q", l.curr)
+	}
+	value = append(value, l.curr)
+
+	if l.curr == '0' {
+		// No digit allowed.
+		err = l.nextRune()
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return INTEGER, string(value), err
+		}
+		if unicode.IsDigit(l.curr) {
+			return INTEGER, string(value), errors.New("illegal number format (no octal)")
+		}
+	} else {
+		// Read integral portion.
+		for err = l.nextRune(); err == nil && unicode.IsDigit(l.curr); err = l.nextRune() {
+			value = append(value, l.curr)
+		}
+	}
+
+	if err != nil && err != io.EOF {
 		return INTEGER, string(value), err
 	}
-	value = append(value, '.')
+
+	if l.curr != '.' {
+		if !l.eof && l.curr != '#' && !unicode.IsSpace(l.curr) {
+			return INTEGER, string(value), fmt.Errorf("illegal digit: %q", l.curr)
+		}
+		// Ignore EOF; it's caught next time.
+		l.unreadRune()
+		return INTEGER, string(value), nil
+	}
+	value = append(value, l.curr)
+
 	// Read decimal portion.
+	err = l.nextRune()
+	if err != nil {
+		if err == io.EOF {
+			err = fmt.Errorf("expected digit; got EOF")
+		}
+		return DECIMAL, string(value), err
+	}
+	value = append(value, l.curr)
 	for err = l.nextRune(); !l.eof && err == nil && unicode.IsDigit(l.curr); err = l.nextRune() {
 		value = append(value, l.curr)
 	}
+	if !l.eof && l.curr != '#' && !unicode.IsSpace(l.curr) {
+		return DECIMAL, string(value), fmt.Errorf("illegal digit: %q", l.curr)
+	}
 	l.unreadRune()
-	// TODO: Handle exponents?
+
+	// TODO: Handle exponents.
+
+	// EOF is OK here.
+	if err == io.EOF {
+		err = nil
+	}
+
 	return DECIMAL, string(value), err
 }

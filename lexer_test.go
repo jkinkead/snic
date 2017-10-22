@@ -171,13 +171,23 @@ func TestReadNumber(t *testing.T) {
 		input     string
 		tokenType TokenType
 		value     string
-		err       error
+		errString string
 		// Next rune after a call to nextRune().
 		next rune
 	}{
-		{"Integer", "123 4", INTEGER, "123", nil, ' '},
-		{"Decimal", "1.23\n", DECIMAL, "1.23", nil, '\n'},
-		{"DecimalNoExponent", "12.", DECIMAL, "12.", io.EOF, '\u0000'},
+		{"Integer", "123 4", INTEGER, "123", "", ' '},
+		{"Zero", "0", INTEGER, "0", "", '\u0000'},
+		{"NegativeZero", "-0#foo", INTEGER, "-0", "", '#'},
+		{"NegativeInteger", "-1234", INTEGER, "-1234", "", '\u0000'},
+		{"LeadingZero", "01234", INTEGER, "0", "illegal number format (no octal)", '2'},
+		{"LeadingChar", "-foo", INTEGER, "", "illegal start of number: 'f'", 'o'},
+		{"MiddleCharInteger", "12o", INTEGER, "12", "illegal digit: 'o'", '\u0000'},
+		{"NegativeLeadingZero", "-01234", INTEGER, "-0", "illegal number format (no octal)", '2'},
+		{"Decimal", "1.23", DECIMAL, "1.23", "", '\u0000'},
+		{"DecimalZero", "0.23", DECIMAL, "0.23", "", '\u0000'},
+		{"NegativeDecimal", "-1.23\n", DECIMAL, "-1.23", "", '\n'},
+		{"DecimalNoExponent", "12.", DECIMAL, "12.", "expected digit; got EOF", '\u0000'},
+		{"MiddleCharDecimal", "12.00oo", DECIMAL, "12.00", "illegal digit: 'o'", 'o'},
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -189,15 +199,21 @@ func TestReadNumber(t *testing.T) {
 			if value != fixture.value {
 				t.Errorf("Expected value %q; got %q", fixture.value, value)
 			}
-			if err != fixture.err {
-				t.Errorf("Expected %s; got %s", fixture.err, err)
+			if err != nil {
+				if fixture.errString != "" {
+					if err.Error() != fixture.errString {
+						t.Errorf("Expected %s; got %s", fixture.errString, err)
+					}
+				} else {
+					t.Errorf("Unexpected error: %s", err)
+				}
 			}
 			err = l.nextRune()
 			if err != nil && err != io.EOF {
 				t.Errorf("Unexpected error: %s", err)
 			}
 			if l.curr != fixture.next {
-				t.Errorf("Expected %q; got %q", fixture.next, l.curr)
+				t.Errorf("Expected next rune to be %q; got %q", fixture.next, l.curr)
 			}
 		})
 	}
@@ -218,7 +234,7 @@ func TestReadString(t *testing.T) {
 		{"IllegalEscape", `"\g" `, "", "illegal escape code: \\g", '"'},
 		{"UnterminatedEscape", `"foo\`, "foo", "expected escaped character; got EOF", '\u0000'},
 		{"UnicodeEscapes", `"\u0020- \u03a9, \u03C9" `, " - Ω, ω", "", ' '},
-		{"BadHex", `"\ufoobar`, "", "expected hexadecimal digit; got o", 'o'},
+		{"BadHex", `"\ufoobar`, "", "expected hexadecimal digit; got 'o'", 'o'},
 		{"UnterminatedHex", `"\ufff`, "", "expected hexadecimal digit; got EOF", '\u0000'},
 	}
 	for _, fixture := range fixtures {
