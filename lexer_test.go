@@ -294,3 +294,102 @@ func TestReadBareword(t *testing.T) {
 		})
 	}
 }
+
+func TestStream(t *testing.T) {
+	fixtures := []struct {
+		name         string
+		input        string
+		outputTokens []Token
+		outputErrors []string
+	}{
+		{"AllTokensValid", `
+# Valid syntax.
+foo.bar= "gaz"
+foo = {
+  a = 123.3
+  b = a.b
+  c=[1,"two"]#comment
+  d=-12
+  lala=_
+}`, []Token{
+			{WHITESPACE, "\n"},
+			{COMMENT, "# Valid syntax.\n"},
+			{BAREWORD, "foo"},
+			{DOT, "."},
+			{BAREWORD, "bar"},
+			{EQUALS, "="},
+			{WHITESPACE, " "},
+			{STRING, "gaz"},
+			{WHITESPACE, "\n"},
+			{BAREWORD, "foo"},
+			{WHITESPACE, " "},
+			{EQUALS, "="},
+			{WHITESPACE, " "},
+			{LBRACE, "{"},
+			{WHITESPACE, "\n  "},
+			{BAREWORD, "a"},
+			{WHITESPACE, " "},
+			{EQUALS, "="},
+			{WHITESPACE, " "},
+			{DECIMAL, "123.3"},
+			{WHITESPACE, "\n  "},
+			{BAREWORD, "b"},
+			{WHITESPACE, " "},
+			{EQUALS, "="},
+			{WHITESPACE, " "},
+			{BAREWORD, "a"},
+			{DOT, "."},
+			{BAREWORD, "b"},
+			{WHITESPACE, "\n  "},
+			{BAREWORD, "c"},
+			{EQUALS, "="},
+			{LBRACKET, "["},
+			{INTEGER, "1"},
+			{COMMA, ","},
+			{STRING, "two"},
+			{RBRACKET, "]"},
+			{COMMENT, "#comment\n"},
+			{WHITESPACE, "  "},
+			{BAREWORD, "d"},
+			{EQUALS, "="},
+			{INTEGER, "-12"},
+			{WHITESPACE, "\n  "},
+			{BAREWORD, "lala"},
+			{EQUALS, "="},
+			{BAREWORD, "_"},
+			{WHITESPACE, "\n"},
+			{RBRACE, "}"},
+			{EOF, ""},
+		}, nil},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			l := NewLexer(bytes.NewReader([]byte(fixture.input)))
+			for i, expected := range fixture.outputTokens {
+				actual, err := l.Next()
+				if actual.TokenType != expected.TokenType {
+					t.Errorf("Expected token type %v, got %v", expected.TokenType, actual.TokenType)
+				}
+				if actual.Contents != expected.Contents {
+					t.Errorf("Expected contents %q, got %q", expected.Contents, actual.Contents)
+				}
+				var expectedErr *string
+				if fixture.outputErrors != nil {
+					expectedErr = &fixture.outputErrors[i]
+				}
+				if err != nil {
+					if expectedErr == nil {
+						t.Errorf("Unexpected error: %v", err)
+					} else if err.Error() != *expectedErr {
+						t.Errorf("Expected error %s, got %v", expectedErr, err)
+					}
+				} else if expectedErr != nil {
+					t.Errorf("Expected error %s, got no error", expectedErr)
+				}
+			}
+			if !l.eof {
+				t.Errorf("Didn't exhaust token stream")
+			}
+		})
+	}
+}

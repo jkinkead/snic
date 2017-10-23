@@ -37,6 +37,8 @@ const (
 	RBRACKET
 	// .
 	DOT
+	// ,
+	COMMA
 
 	COMMENT
 	// Whitespace (including comments)
@@ -82,6 +84,9 @@ func (l *Lexer) Next() (Token, error) {
 
 	err := l.nextRune()
 	if err != nil {
+		if err == io.EOF {
+			err = nil
+		}
 		return Token{EOF, ""}, err
 	}
 
@@ -105,6 +110,12 @@ func (l *Lexer) Next() (Token, error) {
 	case '.':
 		tokenType = DOT
 		contents = "."
+	case ',':
+		tokenType = COMMA
+		contents = ","
+	case '=':
+		tokenType = EQUALS
+		contents = "="
 	case '#':
 		err = l.unreadRune()
 		if err == nil {
@@ -132,7 +143,10 @@ func (l *Lexer) Next() (Token, error) {
 		if unicode.IsSpace(l.curr) {
 			// Read whitespace.
 			tokenType = WHITESPACE
-			contents, err = l.readWhitespace()
+			err = l.unreadRune()
+			if err == nil {
+				contents, err = l.readWhitespace()
+			}
 		} else if unicode.IsDigit(l.curr) {
 			// Read number.
 			err = l.unreadRune()
@@ -141,7 +155,10 @@ func (l *Lexer) Next() (Token, error) {
 			}
 		} else if unicode.IsLetter(l.curr) {
 			tokenType = BAREWORD
-			contents, err = l.readBareword()
+			err = l.unreadRune()
+			if err == nil {
+				contents, err = l.readBareword()
+			}
 		} else {
 			// Unknown character; report an error.
 			tokenType = ILLEGAL
