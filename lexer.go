@@ -14,8 +14,8 @@ import (
 type TokenType int
 
 const (
-	// A portion of a config path.
-	KEY TokenType = iota
+	// A portion of a config path, or a keyword.
+	BAREWORD TokenType = iota
 
 	// Literal values.
 	INTEGER
@@ -23,8 +23,6 @@ const (
 	STRING
 	TRUE
 	FALSE
-	// "_" value for documentation-only values in templates.
-	PLACEHOLDER_VALUE
 
 	// Syntax elements.
 	// =
@@ -39,12 +37,6 @@ const (
 	RBRACKET
 	// .
 	DOT
-
-	// Keywords.
-	SUPER
-	SELF
-	IMPORT
-	TEMPLATE
 
 	COMMENT
 	// Whitespace (including comments)
@@ -133,9 +125,9 @@ func (l *Lexer) Next() (Token, error) {
 		}
 	case '_':
 		// Key or underscore literal.
-		// TODO: Read key, and check for PLACEHOLDER_VALUE instead.
-		tokenType = PLACEHOLDER_VALUE
-		contents = "_"
+		l.unreadRune()
+		tokenType = BAREWORD
+		contents, err = l.readBareword()
 	default:
 		if unicode.IsSpace(l.curr) {
 			// Read whitespace.
@@ -148,8 +140,8 @@ func (l *Lexer) Next() (Token, error) {
 				tokenType, contents, err = l.readNumber()
 			}
 		} else if unicode.IsLetter(l.curr) {
-			// TODO: Read key!
-			tokenType = KEY
+			tokenType = BAREWORD
+			contents, err = l.readBareword()
 		} else {
 			// Unknown character; report an error.
 			tokenType = ILLEGAL
@@ -309,6 +301,8 @@ func (l *Lexer) readWhitespace() (string, error) {
 
 // Reads a number. This could be an integer or a decimal number. The type read, contents, and any
 // error are returned.
+// This parses any number which matches the JSON spec.
+// Regex: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
 func (l *Lexer) readNumber() (TokenType, string, error) {
 	value := make([]rune, 0, 10)
 	err := l.nextRune()
@@ -358,9 +352,6 @@ func (l *Lexer) readNumber() (TokenType, string, error) {
 	}
 
 	if l.curr != '.' {
-		if !l.eof && l.curr != '#' && !unicode.IsSpace(l.curr) {
-			return INTEGER, string(value), fmt.Errorf("illegal digit: %q", l.curr)
-		}
 		// Ignore EOF; it's caught next time.
 		l.unreadRune()
 		return INTEGER, string(value), nil
@@ -375,16 +366,17 @@ func (l *Lexer) readNumber() (TokenType, string, error) {
 		}
 		return DECIMAL, string(value), err
 	}
+	if !unicode.IsDigit(l.curr) {
+		return DECIMAL, string(value), fmt.Errorf("expected digit; got %q", l.curr)
+	}
 	value = append(value, l.curr)
 	for err = l.nextRune(); !l.eof && err == nil && unicode.IsDigit(l.curr); err = l.nextRune() {
 		value = append(value, l.curr)
 	}
-	if !l.eof && l.curr != '#' && !unicode.IsSpace(l.curr) {
-		return DECIMAL, string(value), fmt.Errorf("illegal digit: %q", l.curr)
-	}
-	l.unreadRune()
 
 	// TODO: Handle exponents.
+
+	l.unreadRune()
 
 	// EOF is OK here.
 	if err == io.EOF {
@@ -392,4 +384,29 @@ func (l *Lexer) readNumber() (TokenType, string, error) {
 	}
 
 	return DECIMAL, string(value), err
+}
+
+// Reads a bareword. Barewords must be a letter, followed by zero or more letters or digits.
+func (l *Lexer) readBareword() (string, error) {
+	value := make([]rune, 0, 10)
+	err := l.nextRune()
+	if err != nil {
+		return "", err
+	}
+	if !unicode.IsLetter(l.curr) && l.curr != '_' {
+		return "", fmt.Errorf("expected letter, got %q", l.curr)
+	}
+
+	value = append(value, l.curr)
+	for err = l.nextRune(); !l.eof && err == nil && (unicode.IsLetter(l.curr) || unicode.IsDigit(l.curr) || l.curr == '_'); err = l.nextRune() {
+		value = append(value, l.curr)
+	}
+	l.unreadRune()
+
+	// EOF is OK here.
+	if err == io.EOF {
+		err = nil
+	}
+
+	return string(value), err
 }
