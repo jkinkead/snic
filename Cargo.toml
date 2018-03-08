@@ -1,0 +1,11 @@
+[package]
+name = "snc"
+version = "0.1.0"
+authors = ["Jesse Kinkead <jesse.kinkead@gmail.com>"]
+
+[dependencies]
+regex = "0.2.5"
+
+[dependencies.nom]
+version = "3.2.1"
+features = ["regexp"]
