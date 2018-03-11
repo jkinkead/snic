@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["Jesse Kinkead <jesse.kinkead@gmail.com>"]
 
 [dependencies]
-regex = "0.2.5"
+bytecount = "^0.3"
+memchr = "^2.0"
 
 [dependencies.nom]
-version = "3.2.1"
-features = ["regexp"]
+version = "4.0.0-beta1"
