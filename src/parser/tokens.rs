@@ -4,7 +4,7 @@
 use input::Span;
 use parser::errors::ParseError;
 
-use nom::IResult;
+use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind, IResult};
 
 // Naming conventions:
 // req_ prefix means the method will hard-fail if unmatched (nom::Err::Failure).
@@ -38,13 +38,44 @@ named!(comment<Span, Span>, recognize!(do_parse!(char!('#') >> is_not!("\n") >> 
 
 /// Generic whitespace, used between most tokens.
 named!(pub opt_whitespace<Span, Span>, recognize!(many0!(alt!(
-    comment | 
+    comment |
     // Newline whitespace.
     is_a!(" \r\t\n")))));
 
 /// Whitespace with a newline appended. Used to match whitespace at the end of statements.
 named!(pub req_whitespace_with_newline<Span, Span>, recognize!(
         do_parse!(opt!(is_a!(" \r\t")) >> opt!(comment) >> req_newline >> (()) )));
+
+/// Matches zero or more escaped characters in a string with the given quote character. This returns
+/// the full string span, including escapes and quotes.
+pub fn escaped_chars(input: Span, quote: char) -> IResult<Span, Span> {
+    use nom::{InputIter, Slice};
+    let mut iter = input.iter_indices();
+    // Expect start-quote.
+    match iter.next() {
+        Some((i, c)) if c != quote => {
+            return Err(NomErr::Error(Context::Code(input, NomErrorKind::Char)))
+        }
+        None => return Err(NomErr::Error(Context::Code(input, NomErrorKind::Eof))),
+        // Was quote.
+        _ => (),
+    }
+    loop {
+        match iter.next() {
+            Some((i, c)) if c == quote => {
+                return Ok((input.slice((i + 1)..), input.slice(..(i + 1))))
+            }
+            // Escaped char, skip checking next char for quote or escape.
+            Some((_, '\\')) => match iter.next() {
+                None => return ParseError::UnterminatedString.to_fail(input),
+                // Ok!
+                _ => (),
+            },
+            Some(_) => (),
+            None => return ParseError::UnterminatedString.to_fail(input),
+        }
+    }
+}
 
 
 #[cfg(test)]
@@ -123,6 +154,41 @@ mod tests {
             result,
             ParseError::ExpectedNewline
                 .to_fail(Span::from_values("another.statement = true", 2, 1))
+        );
+    }
+
+    #[test]
+    fn escaped_chars_ok_with_escapes() {
+        let result = escaped_chars(Span::from("\"this is a \\\"string\\\"\"\nnext=true"), '"');
+        let ok_val = result.expect("string should parse");
+        assert_eq!(ok_val.0.fragment, CompleteStr("\nnext=true"));
+        assert_eq!(ok_val.1, Span::from("\"this is a \\\"string\\\"\""));
+    }
+
+    #[test]
+    fn escaped_chars_err_unterminated() {
+        let input = Span::from("\"this had no en");
+        let result = escaped_chars(input, '"');
+        assert_eq!(
+            result,
+            Err(NomErr::Failure(Context::Code(
+                input,
+                NomErrorKind::Custom(ParseError::UnterminatedString as u32)
+            )))
+        );
+    }
+
+    // Tests an unterminated string with an escape at the end.
+    #[test]
+    fn escaped_chars_err_escape_unterminated() {
+        let input = Span::from("\"this escape is bad: \\");
+        let result = escaped_chars(input, '"');
+        assert_eq!(
+            result,
+            Err(NomErr::Failure(Context::Code(
+                input,
+                NomErrorKind::Custom(ParseError::UnterminatedString as u32)
+            )))
         );
     }
 }

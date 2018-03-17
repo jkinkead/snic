@@ -1,8 +1,9 @@
-//! `values` contains parsers for values in a config file. All public methods produce instances of
-//! RawConfigValue.
+//! `scalars` contains parsers for number and string values in a config file. All public methods
+//! produce instances of RawConfigValue.
 
 use input::Span;
 use parser::errors::ParseError;
+use parser::tokens::escaped_chars;
 use parser::types::RawConfigValue;
 
 use nom;
@@ -13,8 +14,8 @@ use nom::IResult;
 // opt_ prefix means it will always match, possibly empty.
 // No prefix means default backtracking behavior on no match (nom::Err::Error).
 
-/// Integer portion of a number. This parses a JSON integer, not a rust integer (multiple zeros
-/// disallowed). Note that this does not enforce any and-of-token requirements.
+/// Integer portion of a number. This parses a JSON integer, not a rust integer (no octal or hex).
+/// Note that this does not enforce any and-of-token requirements.
 named!(integer_str<Span, Span>, recognize!(
         tuple!(
             opt!(one_of!("+-")),
@@ -45,7 +46,7 @@ named!(float<Span, RawConfigValue>, do_parse!(
 
 /// Float or integer. This fails with a malformed number error if the number is not followed by
 /// whitespace, `,`, `]`, or `}` (a valid value terminator).
-fn number(input: Span) -> IResult<Span, RawConfigValue> {
+pub fn number(input: Span) -> IResult<Span, RawConfigValue> {
     float(input)
         .or_else(|_| integer(input))
         .and_then(|(rest, value)| {
@@ -59,6 +60,10 @@ fn number(input: Span) -> IResult<Span, RawConfigValue> {
             }
         })
 }
+
+/// Matches double-quoted string content.
+named!(pub string<Span, RawConfigValue>,
+    map!(call!(escaped_chars, '"'), |value| RawConfigValue::String(value)));
 
 #[cfg(test)]
 mod tests {

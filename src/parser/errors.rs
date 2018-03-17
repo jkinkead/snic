@@ -40,21 +40,6 @@ impl From<u32> for ParseError {
 }
 
 impl ParseError {
-    /// Convert the parse error to a nom error.
-    pub fn to_err<I, T>(self, input: T) -> Result<I, NomErr<T, ParseError>> {
-        Err(NomErr::Error(
-            Context::Code(input, NomErrorKind::Custom(self)),
-        ))
-    }
-
-    /// Convert the parse error to a nom failure.
-    // TODO(jkinkead): Delete.
-    pub fn to_fail_old<I, T>(self, input: T) -> Result<I, NomErr<T, ParseError>> {
-        Err(NomErr::Failure(
-            Context::Code(input, NomErrorKind::Custom(self)),
-        ))
-    }
-
     /// Convert the parse error to a nom failure.
     pub fn to_fail<I, T>(self, input: T) -> Result<I, NomErr<T>> {
         Err(NomErr::Failure(
