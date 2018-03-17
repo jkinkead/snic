@@ -16,6 +16,8 @@ pub enum ParseError {
     ExpectedMapStart = 4,
     /// Dot (`.`) was required but missing.
     ExpectedDot = 5,
+    /// Number could not be parsed.
+    MalformedNumber = 6,
     /// Unknown error code passed from a parser. Should not be returned.
     Unknown = 999,
 }
@@ -31,6 +33,7 @@ impl From<u32> for ParseError {
             3 => ParseError::ExpectedEquals,
             4 => ParseError::ExpectedMapStart,
             5 => ParseError::ExpectedDot,
+            6 => ParseError::MalformedNumber,
             _ => ParseError::Unknown,
         }
     }
