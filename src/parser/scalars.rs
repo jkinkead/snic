@@ -44,8 +44,8 @@ named!(float<Span, RawConfigValue>, do_parse!(
     (RawConfigValue::Float(float_str))
     ));
 
-/// Float or integer. This fails with a malformed number error if the number is not followed by
-/// whitespace, `,`, `]`, or `}` (a valid value terminator).
+/// Float or integer. This fails with a malformed number error if the number is followed by a letter
+/// or number. This helps clarify some confusing parse errors.
 pub fn number(input: Span) -> IResult<Span, RawConfigValue> {
     float(input)
         .or_else(|_| integer(input))
@@ -53,10 +53,10 @@ pub fn number(input: Span) -> IResult<Span, RawConfigValue> {
             use nom::InputIter;
             let mut iter = rest.iter_elements();
             match iter.next() {
-                // Whitespace and value terminators.
-                Some(' ') | Some('\t') | Some('\r') | Some('\n') | Some(',') | Some(']')
-                | Some('}') | None => Ok((rest, value)),
-                _ => ParseError::MalformedNumber.to_fail(input),
+                // EOF is fine.
+                None => Ok((rest, value)),
+                Some(c) if char::is_alphanumeric(c) => ParseError::MalformedNumber.to_fail(input),
+                _ =>  Ok((rest, value)),
             }
         })
 }
@@ -160,8 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn number_err_malformed_no_decimal() {
-        let input = Span::from("10.\nnext=1");
+    fn number_err_malformed_has_letter() {
+        let input = Span::from("10a\nnext=1");
         let result = number(input);
         assert_eq!(
             result,
