@@ -40,6 +40,13 @@ impl From<u32> for ParseError {
 }
 
 impl ParseError {
+    /// Convert the parse error to a nom error.
+    pub fn to_err<I, T>(self, input: T) -> Result<I, NomErr<T>> {
+        Err(NomErr::Error(
+            Context::Code(input, NomErrorKind::Custom(self as u32)),
+        ))
+    }
+
     /// Convert the parse error to a nom failure.
     pub fn to_fail<I, T>(self, input: T) -> Result<I, NomErr<T>> {
         Err(NomErr::Failure(

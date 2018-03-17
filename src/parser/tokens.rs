@@ -77,6 +77,30 @@ pub fn escaped_chars(input: Span, quote: char) -> IResult<Span, Span> {
     }
 }
 
+/// Matches a single alphabetic character.
+fn letter1(input: Span) -> IResult<Span, Span> {
+    use nom::{InputIter, Slice};
+    match input.iter_elements().next() {
+        Some(c) if char::is_alphabetic(c) => Ok((input.slice(1..), input.slice(..1))),
+        _ => ParseError::BadKey.to_err(input),
+    }
+}
+
+/// Matches zero or more identifier continuation characters (alphanumeric and _).
+fn identifier_cont0(input: Span) -> IResult<Span, Span> {
+    use nom::{InputIter, InputLength, Slice};
+    let end_pos = input.position(|c| !(char::is_alphanumeric(c) || c == '_'));
+    match end_pos {
+        Some(p) => Ok((input.slice(p..), input.slice(..p))),
+        None => Ok((
+            input.slice(input.input_len()..),
+            input.slice(..input.input_len()),
+        )),
+    }
+}
+
+/// An identifier token. This can be a key segment or keyword.
+named!(pub id_token<Span, Span>, recognize!(tuple!(letter1, identifier_cont0)));
 
 #[cfg(test)]
 mod tests {
@@ -190,5 +214,20 @@ mod tests {
                 NomErrorKind::Custom(ParseError::UnterminatedString as u32)
             )))
         );
+    }
+
+    #[test]
+    fn id_token_ok() {
+        let result = id_token(Span::from("foo.bar"));
+        let ok_val = result.expect("id should parse");
+        assert_eq!(ok_val.0.fragment, CompleteStr(".bar"));
+        assert_eq!(ok_val.1, Span::from("foo"));
+    }
+
+    #[test]
+    fn id_token_err_starting_number() {
+        let input = Span::from("1foo");
+        let result = id_token(input);
+        assert_eq!(result, ParseError::BadKey.to_err(input));
     }
 }
