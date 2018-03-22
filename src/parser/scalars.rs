@@ -56,7 +56,7 @@ pub fn number(input: Span) -> IResult<Span, RawConfigValue> {
                 // EOF is fine.
                 None => Ok((rest, value)),
                 Some(c) if char::is_alphanumeric(c) => ParseError::MalformedNumber.to_fail(input),
-                _ =>  Ok((rest, value)),
+                _ => Ok((rest, value)),
             }
         })
 }

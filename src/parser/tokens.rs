@@ -24,11 +24,14 @@ fn req_char(input: Span, to_match: char, if_missing_err: ParseError) -> IResult<
 /// Single `=`. Used in assignment and template.
 named!(pub req_equals<Span, Span>, call!(req_char, '=', ParseError::ExpectedEquals));
 
-/// Single newline. Used in assignment, template, and import.
-named!(pub req_newline<Span, Span>, call!(req_char, '\n', ParseError::ExpectedNewline));
-
-/// Start of a map. Used in template and from.
+/// Start of a map.
 named!(pub req_map_start<Span, Span>, call!(req_char, '{', ParseError::ExpectedMapStart));
+
+/// End of a map. Note the error type; this could be a map ending or another assignment.
+named!(pub req_map_end<Span, Span>, call!(req_char, '}', ParseError::ExpectedAssignmentOrMapEnd));
+
+/// End of a list. Note the error type; this could be a list ending or another value.
+named!(pub req_list_end<Span, Span>, call!(req_char, ']', ParseError::ExpectedValueOrListEnd));
 
 /// Single '.' in ref. Used for "super" and "self" refs (non-static refs).
 named!(pub req_dot<Span, Span>, call!(req_char, '.', ParseError::ExpectedDot));
@@ -36,15 +39,19 @@ named!(pub req_dot<Span, Span>, call!(req_char, '.', ParseError::ExpectedDot));
 /// Comment, without terminal newlines.
 named!(comment<Span, Span>, recognize!(do_parse!(char!('#') >> is_not!("\n") >> (()) )));
 
-/// Generic whitespace, used between most tokens.
-named!(pub opt_whitespace<Span, Span>, recognize!(many0!(alt!(
-    comment |
-    // Newline whitespace.
-    is_a!(" \r\t\n")))));
+/// Single "unit" of whitespace, comment or whitespace string.
+named!(whitespace_unit<Span, Span>, alt!(comment | is_a!(" \t\r\n")));
+
+/// Generic non-empty whitespace, used between word tokens.
+named!(pub whitespace<Span, Span>, recognize!(many1!(whitespace_unit)));
+
+/// Generic optional whitespace, used between non-word tokens.
+named!(pub opt_whitespace<Span, Span>, recognize!(many0!(whitespace_unit)));
 
 /// Whitespace with a newline appended. Used to match whitespace at the end of statements.
-named!(pub req_whitespace_with_newline<Span, Span>, recognize!(
-        do_parse!(opt!(is_a!(" \r\t")) >> opt!(comment) >> req_newline >> (()) )));
+named!(pub whitespace_with_newline<Span, Span>, recognize!(
+        do_parse!(opt!(is_a!(" \r\t")) >> opt!(comment) >> char!('\n') >> opt_whitespace >>
+            (()) )));
 
 /// Matches zero or more escaped characters in a string with the given quote character. This returns
 /// the full string span, including escapes and quotes.
@@ -153,31 +160,37 @@ mod tests {
 
     // Tests that line-terminating whitespace matches without a comment.
     #[test]
-    fn req_whitespace_with_newline_ok_without_comment() {
-        let result = req_whitespace_with_newline(Span::from("   \t\nfoo = 1\n"));
+    fn whitespace_with_newline_ok_without_comment() {
+        let result = whitespace_with_newline(Span::from("   \t\n  foo = 1\n"));
         let ok_val = result.expect("whitespace should have parsed");
         assert_eq!(ok_val.0.fragment, CompleteStr("foo = 1\n"));
-        assert_eq!(ok_val.1.fragment, CompleteStr("   \t\n"));
+        assert_eq!(ok_val.1.fragment, CompleteStr("   \t\n  "));
     }
 
     // Tests that line-terminating whitespace matches with a comment.
     #[test]
-    fn req_whitespace_with_newline_ok_with_comment() {
-        let result =
-            req_whitespace_with_newline(Span::from(" # end-of-line comment\nnext.line = true"));
+    fn whitespace_with_newline_ok_with_comment() {
+        let result = whitespace_with_newline(Span::from(
+            " # end-of-line comment\n# nother\n\nnext.line = true",
+        ));
         let ok_val = result.expect("whitespace should have parsed");
         assert_eq!(ok_val.0.fragment, CompleteStr("next.line = true"));
-        assert_eq!(ok_val.1.fragment, CompleteStr(" # end-of-line comment\n"));
+        assert_eq!(
+            ok_val.1.fragment,
+            CompleteStr(" # end-of-line comment\n# nother\n\n")
+        );
     }
 
-    // Tests that whitespace without a newline returns a failure.
+    // Tests that whitespace without a newline returns an error.
     #[test]
-    fn req_whitespace_with_newline_err_no_newline() {
-        let result = req_whitespace_with_newline(Span::from("  another.statement = true"));
+    fn whitespace_with_newline_err_no_newline() {
+        let result = whitespace_with_newline(Span::from("  another.statement = true"));
         assert_eq!(
             result,
-            ParseError::ExpectedNewline
-                .to_fail(Span::from_values("another.statement = true", 2, 1))
+            Err(NomErr::Error(Context::Code(
+                Span::from_values("another.statement = true", 2, 1),
+                NomErrorKind::Char
+            )))
         );
     }
 

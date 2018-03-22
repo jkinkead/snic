@@ -7,13 +7,15 @@ pub struct Document<'a> {
     statements: Vec<Statement<'a>>,
 }
 
-/// A key, split into segments. Unquoted key segments will be valid keys (won't be value literals).
+/// A sequence of key segments or other tokens. Length-one unquoted keys will be translated into
+/// literal (true, false, undefined) values as needed.
 #[derive(Debug, PartialEq)]
-pub struct ConfigKey<'a> {
-    pub key: Vec<Span<'a>>,
+pub struct ConfigKeyLike<'a> {
+    pub segments: Vec<ConfigKeySegment<'a>>,
 }
 
 /// A segment of a key.
+#[derive(Debug, PartialEq)]
 pub enum ConfigKeySegment<'a> {
     /// A raw quoted key, with backticks intact.
     Quoted(Span<'a>),
@@ -22,13 +24,14 @@ pub enum ConfigKeySegment<'a> {
 }
 
 /// A statement in a config file.
+#[derive(Debug, PartialEq)]
 pub enum Statement<'a> {
     Assignment {
-        target: ConfigKey<'a>,
+        target: ConfigKeyLike<'a>,
         value: RawConfigValue<'a>,
     },
     Template {
-        name: ConfigKey<'a>,
+        name: ConfigKeyLike<'a>,
         value: RawConfigMap<'a>,
     },
 }
@@ -36,19 +39,15 @@ pub enum Statement<'a> {
 #[derive(Debug, PartialEq)]
 pub struct RawConfigMap<'a> {
     /// In-order parsed values.
-    values: Vec<(ConfigKey<'a>, RawConfigValue<'a>)>,
+    pub values: Vec<Statement<'a>>,
     /// The parent template, if there is one.
-    template: Option<ConfigKey<'a>>,
+    pub template: Option<ConfigKeyLike<'a>>,
 }
 
 /// A config value as parsed from a config file. This may include unresolved references, templates,
 /// and uninterpolated strings.
 #[derive(Debug, PartialEq)]
 pub enum RawConfigValue<'a> {
-    /// Literal "true".
-    True(Span<'a>),
-    /// Literal "false".
-    False(Span<'a>),
     /// Integer literal, suitable for parsing with i32::from_str.
     Integer(Span<'a>),
     /// Floating-point literal, suitable for parsing with f64::from_str.
@@ -60,8 +59,6 @@ pub enum RawConfigValue<'a> {
     Map(RawConfigMap<'a>),
     /// A list without references resolved.
     List { values: Vec<RawConfigValue<'a>> },
-    /// A reference to another key.
-    Ref(ConfigKey<'a>),
-    /// Literal undefined value, only valid in templates.
-    Undefined(Span<'a>),
+    /// A reference to another key, or a literal token.
+    RefLike(ConfigKeyLike<'a>),
 }
