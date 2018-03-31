@@ -2,9 +2,9 @@
 
 use input::Span;
 
-/// A document, with imports resolved into statements.
+/// A document, with imports resolved into (assignment) statements.
 pub struct Document<'a> {
-    statements: Vec<Statement<'a>>,
+    pub statements: Vec<Statement<'a>>,
 }
 
 /// A sequence of key segments or other tokens. Length-one unquoted keys will be translated into

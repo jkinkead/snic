@@ -1,8 +1,8 @@
-//! The main entrypoint for the first-pass parser. This contains rules for building non-scalar
+//! The main value parsers for the first-pass parser. This contains rules for building non-scalar
 //! config types, as well as processing syntax items.
 
 use input::Span;
-use parser::errors::ParseError;
+use parser::errors::ErrorKind;
 use parser::scalars;
 use parser::tokens;
 use parser::types::{ConfigKeyLike, ConfigKeySegment, RawConfigMap, RawConfigValue, Statement};
@@ -15,7 +15,7 @@ named!(config_key_segment<Span, ConfigKeySegment>,
         map!(call!(tokens::escaped_chars, '`'), |quoted| ConfigKeySegment::Quoted(quoted))));
 
 /// Parses a ConfigKeyLike.
-named!(config_key_like<Span, ConfigKeyLike>, map!(separated_nonempty_list!(
+named!(pub config_key_like<Span, ConfigKeyLike>, map!(separated_nonempty_list!(
         tuple!(tokens::opt_whitespace, char!('.'), tokens::opt_whitespace),
         config_key_segment
     ),
@@ -27,7 +27,7 @@ named!(ref_like<Span, RawConfigValue>, map!(
     config_key_like,
     |value| RawConfigValue::RefLike(value)));
 
-named!(assignment<Span, Statement>, do_parse!(
+named!(pub assignment<Span, Statement>, do_parse!(
         target: config_key_like >>
         // tuple! call is to avoid do_parse! finickiness.
         tuple!(tokens::opt_whitespace, tokens::req_equals, tokens::opt_whitespace) >>
@@ -73,7 +73,10 @@ named!(config_value<Span, RawConfigValue>,
 /// ExpectedValue if item is not a config value.
 named!(req_config_value<Span, RawConfigValue>,
     return_error!(
-        add_return_error!(NomErrorKind::Custom(ParseError::ExpectedValue as u32), config_value)));
+        // Note that the macro imports ErrorKind from nom, so we need to fully-qualify the parser
+        // symbol below.
+        add_return_error!(NomErrorKind::Custom(super::errors::ErrorKind::ExpectedValue as u32),
+            config_value)));
 
 #[cfg(test)]
 mod tests {
@@ -148,7 +151,7 @@ mod tests {
         let result = assignment(Span::from("foo.bar 123"));
         assert_eq!(
             result,
-            ParseError::ExpectedEquals.to_fail(Span::from_values("123", 8, 1))
+            ErrorKind::ExpectedEquals.to_fail(Span::from_values("123", 8, 1))
         );
     }
 
@@ -157,7 +160,7 @@ mod tests {
         let result = assignment(Span::from("foo.bar = = true"));
         assert_eq!(
             result,
-            ParseError::ExpectedValue.to_fail(Span::from_values("= true", 10, 1))
+            ErrorKind::ExpectedValue.to_fail(Span::from_values("= true", 10, 1))
         );
     }
 

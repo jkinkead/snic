@@ -2,7 +2,7 @@
 //! produce instances of RawConfigValue.
 
 use input::Span;
-use parser::errors::ParseError;
+use parser::errors::ErrorKind;
 use parser::tokens::escaped_chars;
 use parser::types::RawConfigValue;
 
@@ -55,7 +55,7 @@ pub fn number(input: Span) -> IResult<Span, RawConfigValue> {
             match iter.next() {
                 // EOF is fine.
                 None => Ok((rest, value)),
-                Some(c) if char::is_alphanumeric(c) => ParseError::MalformedNumber.to_fail(input),
+                Some(c) if char::is_alphanumeric(c) => ErrorKind::MalformedNumber.to_fail(input),
                 _ => Ok((rest, value)),
             }
         })
@@ -167,7 +167,7 @@ mod tests {
             result,
             Err(NomErr::Failure(Context::Code(
                 input,
-                NomErrorKind::Custom(ParseError::MalformedNumber as u32)
+                NomErrorKind::Custom(ErrorKind::MalformedNumber as u32)
             )))
         );
     }
@@ -180,7 +180,7 @@ mod tests {
             result,
             Err(NomErr::Failure(Context::Code(
                 input,
-                NomErrorKind::Custom(ParseError::MalformedNumber as u32)
+                NomErrorKind::Custom(ErrorKind::MalformedNumber as u32)
             )))
         );
     }

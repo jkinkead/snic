@@ -2,7 +2,7 @@
 //! complicated data structures.
 
 use input::Span;
-use parser::errors::ParseError;
+use parser::errors::ErrorKind;
 
 use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind, IResult};
 
@@ -12,7 +12,7 @@ use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind, IResult};
 // No prefix means default backtracking behavior on no match (nom::Err::Error).
 
 /// Matches a single, required character, returning the given error (as a nom failure).
-fn req_char(input: Span, to_match: char, if_missing_err: ParseError) -> IResult<Span, Span> {
+fn req_char(input: Span, to_match: char, if_missing_err: ErrorKind) -> IResult<Span, Span> {
     use nom::{InputIter, Slice};
     let mut iter = input.iter_elements();
     match iter.next() {
@@ -22,19 +22,16 @@ fn req_char(input: Span, to_match: char, if_missing_err: ParseError) -> IResult<
 }
 
 /// Single `=`. Used in assignment and template.
-named!(pub req_equals<Span, Span>, call!(req_char, '=', ParseError::ExpectedEquals));
+named!(pub req_equals<Span, Span>, call!(req_char, '=', ErrorKind::ExpectedEquals));
 
 /// Start of a map.
-named!(pub req_map_start<Span, Span>, call!(req_char, '{', ParseError::ExpectedMapStart));
+named!(pub req_map_start<Span, Span>, call!(req_char, '{', ErrorKind::ExpectedMapStart));
 
 /// End of a map. Note the error type; this could be a map ending or another assignment.
-named!(pub req_map_end<Span, Span>, call!(req_char, '}', ParseError::ExpectedAssignmentOrMapEnd));
+named!(pub req_map_end<Span, Span>, call!(req_char, '}', ErrorKind::ExpectedAssignmentOrMapEnd));
 
 /// End of a list. Note the error type; this could be a list ending or another value.
-named!(pub req_list_end<Span, Span>, call!(req_char, ']', ParseError::ExpectedValueOrListEnd));
-
-/// Single '.' in ref. Used for "super" and "self" refs (non-static refs).
-named!(pub req_dot<Span, Span>, call!(req_char, '.', ParseError::ExpectedDot));
+named!(pub req_list_end<Span, Span>, call!(req_char, ']', ErrorKind::ExpectedValueOrListEnd));
 
 /// Comment, without terminal newlines.
 named!(comment<Span, Span>, recognize!(do_parse!(char!('#') >> is_not!("\n") >> (()) )));
@@ -60,7 +57,7 @@ pub fn escaped_chars(input: Span, quote: char) -> IResult<Span, Span> {
     let mut iter = input.iter_indices();
     // Expect start-quote.
     match iter.next() {
-        Some((i, c)) if c != quote => {
+        Some((_, c)) if c != quote => {
             return Err(NomErr::Error(Context::Code(input, NomErrorKind::Char)))
         }
         None => return Err(NomErr::Error(Context::Code(input, NomErrorKind::Eof))),
@@ -74,12 +71,12 @@ pub fn escaped_chars(input: Span, quote: char) -> IResult<Span, Span> {
             }
             // Escaped char, skip checking next char for quote or escape.
             Some((_, '\\')) => match iter.next() {
-                None => return ParseError::UnterminatedString.to_fail(input),
+                None => return ErrorKind::UnterminatedString.to_fail(input),
                 // Ok!
                 _ => (),
             },
             Some(_) => (),
-            None => return ParseError::UnterminatedString.to_fail(input),
+            None => return ErrorKind::UnterminatedString.to_fail(input),
         }
     }
 }
@@ -89,7 +86,7 @@ fn letter1(input: Span) -> IResult<Span, Span> {
     use nom::{InputIter, Slice};
     match input.iter_elements().next() {
         Some(c) if char::is_alphabetic(c) => Ok((input.slice(1..), input.slice(..1))),
-        _ => ParseError::BadKey.to_err(input),
+        _ => ErrorKind::BadKey.to_err(input),
     }
 }
 
@@ -117,7 +114,7 @@ mod tests {
 
     #[test]
     fn req_char_ok() {
-        let result = req_char(Span::from("ab"), 'a', ParseError::Unknown);
+        let result = req_char(Span::from("ab"), 'a', ErrorKind::Unknown);
         let ok_val = result.expect("'a' should have matched 'ab'");
         assert_eq!(ok_val.0, Span::from_values("b", 1, 1));
         assert_eq!(ok_val.1, Span::from("a"));
@@ -125,8 +122,8 @@ mod tests {
 
     #[test]
     fn req_char_err() {
-        let result = req_char(Span::from("a="), '=', ParseError::ExpectedEquals);
-        assert_eq!(result, ParseError::ExpectedEquals.to_fail(Span::from("a=")));
+        let result = req_char(Span::from("a="), '=', ErrorKind::ExpectedEquals);
+        assert_eq!(result, ErrorKind::ExpectedEquals.to_fail(Span::from("a=")));
     }
 
     #[test]
@@ -210,7 +207,7 @@ mod tests {
             result,
             Err(NomErr::Failure(Context::Code(
                 input,
-                NomErrorKind::Custom(ParseError::UnterminatedString as u32)
+                NomErrorKind::Custom(ErrorKind::UnterminatedString as u32)
             )))
         );
     }
@@ -224,7 +221,7 @@ mod tests {
             result,
             Err(NomErr::Failure(Context::Code(
                 input,
-                NomErrorKind::Custom(ParseError::UnterminatedString as u32)
+                NomErrorKind::Custom(ErrorKind::UnterminatedString as u32)
             )))
         );
     }
@@ -241,6 +238,6 @@ mod tests {
     fn id_token_err_starting_number() {
         let input = Span::from("1foo");
         let result = id_token(input);
-        assert_eq!(result, ParseError::BadKey.to_err(input));
+        assert_eq!(result, ErrorKind::BadKey.to_err(input));
     }
 }

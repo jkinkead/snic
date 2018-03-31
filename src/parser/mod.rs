@@ -1,5 +1,6 @@
 mod config;
+mod document;
 mod errors;
-mod types;
+pub mod types;
 mod scalars;
 mod tokens;
