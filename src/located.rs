@@ -8,7 +8,7 @@ use std::str::{CharIndices, Chars, FromStr};
 use memchr;
 use memchr::Memchr;
 use nom::{AsBytes, AtEof, Compare, CompareResult, FindSubstring, FindToken, InputIter,
-          InputLength, InputTake, Offset, ParseTo, Slice};
+          InputLength, InputTake, Offset, ParseTo, Slice, UnspecializedInput};
 use nom::types::CompleteStr;
 use bytecount::{naive_num_chars, num_chars};
 
@@ -42,6 +42,36 @@ impl<T: AsBytes> LocatedSpan<T> {
             offset: 0,
             fragment: program,
         }
+    }
+
+    /// Returns the column index and the full current line, excluding newlines.
+    pub fn get_column_and_line(&self) -> (usize, String) {
+        let self_bytes = self.fragment.as_bytes();
+        let self_ptr = self_bytes.as_ptr();
+        let before_self = unsafe {
+            assert!(
+                self.offset <= isize::max_value() as usize,
+                "offset is too big"
+            );
+            let orig_input_ptr = self_ptr.offset(-(self.offset as isize));
+            std::slice::from_raw_parts(orig_input_ptr, self.offset)
+        };
+
+        let column = match memchr::memrchr(b'\n', before_self) {
+            None => self.offset + 1,
+            Some(pos) => self.offset - pos,
+        };
+
+        let line_end = match memchr::memchr(b'\n', self_bytes) {
+            None => self_bytes.len(),
+            Some(pos) => pos,
+        };
+
+        let mut line_text =
+            String::from_utf8(before_self[self.offset - (column - 1)..].to_vec()).unwrap();
+        line_text.push_str(&String::from_utf8(self_bytes[..line_end].to_vec()).unwrap());
+
+        (column, line_text)
     }
 
     fn get_columns_and_bytes_before(&self) -> (usize, &[u8]) {
@@ -263,3 +293,5 @@ impl<'a> ToString for LocatedSpan<CompleteStr<'a>> {
         self.fragment.0.to_string()
     }
 }
+
+impl<'a> UnspecializedInput for LocatedSpan<CompleteStr<'a>> {}

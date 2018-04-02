@@ -2,8 +2,9 @@
 
 use input::Span;
 
-/// A document, with imports resolved into (assignment) statements.
+/// A full config document for a single file.
 pub struct Document<'a> {
+    pub imports: Vec<Import<'a>>,
     pub statements: Vec<Statement<'a>>,
 }
 
@@ -21,6 +22,14 @@ pub enum ConfigKeySegment<'a> {
     Quoted(Span<'a>),
     /// An unquoted key segment.
     Unquoted(Span<'a>),
+}
+
+/// Import line in a document.
+pub struct Import<'a> {
+    /// Path to import.
+    pub filename: Span<'a>,
+    /// Optional key to import into.
+    pub target: Option<ConfigKeyLike<'a>>,
 }
 
 /// A statement in a config file.

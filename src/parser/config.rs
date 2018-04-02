@@ -2,12 +2,9 @@
 //! config types, as well as processing syntax items.
 
 use input::Span;
-use parser::errors::ErrorKind;
 use parser::scalars;
 use parser::tokens;
 use parser::types::{ConfigKeyLike, ConfigKeySegment, RawConfigMap, RawConfigValue, Statement};
-
-use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind, IResult};
 
 /// Parses a single config key segment.
 named!(config_key_segment<Span, ConfigKeySegment>,
@@ -27,12 +24,21 @@ named!(ref_like<Span, RawConfigValue>, map!(
     config_key_like,
     |value| RawConfigValue::RefLike(value)));
 
-named!(pub assignment<Span, Statement>, do_parse!(
+named!(template<Span, Statement>, do_parse!(
+        tag!("template") >> value!((), tokens::whitespace) >>
+        name: config_key_like >>
+        tuple!(tokens::opt_whitespace, tokens::req_equals, tokens::opt_whitespace) >>
+        value: alt!(map_with_template | map_no_template) >>
+        (Statement::Template{name, value})));
+
+named!(assignment<Span, Statement>, do_parse!(
         target: config_key_like >>
         // tuple! call is to avoid do_parse! finickiness.
         tuple!(tokens::opt_whitespace, tokens::req_equals, tokens::opt_whitespace) >>
         value: req_config_value >>
         (Statement::Assignment{target, value})));
+
+named!(pub statement<Span, Statement>, alt!(assignment | template));
 
 /// Parses a literal "from" followed by a config key, returning the key.
 named!(from_key<Span, ConfigKeyLike>, do_parse!(
@@ -41,19 +47,24 @@ named!(from_key<Span, ConfigKeyLike>, do_parse!(
     ));
 
 /// Parses a map literal with a "from" clause.
-named!(map_with_template<Span, RawConfigValue>, do_parse!(
+named!(map_with_template<Span, RawConfigMap>, do_parse!(
         template: from_key >>
         tuple!(tokens::opt_whitespace, tokens::req_map_start, tokens::opt_whitespace) >>
-        values: separated_list!(tokens::whitespace_with_newline, assignment) >>
+        values: separated_list!(tokens::whitespace_with_newline, statement) >>
         tuple!(tokens::opt_whitespace, tokens::req_map_end) >>
-        (RawConfigValue::Map(RawConfigMap{template: Some(template), values}))));
+        (RawConfigMap{template: Some(template), values})));
 
 /// Parses a map literal without a "from" clause.
-named!(map_no_template<Span, RawConfigValue>, do_parse!(
+named!(map_no_template<Span, RawConfigMap>, do_parse!(
         char!('{') >> value!((), tokens::opt_whitespace) >>
-        values: separated_list!(tokens::whitespace_with_newline, assignment) >>
+        values: separated_list!(tokens::whitespace_with_newline, statement) >>
         tuple!(tokens::opt_whitespace, tokens::req_map_end) >>
-        (RawConfigValue::Map(RawConfigMap{template: None, values}))));
+        (RawConfigMap{template: None, values})));
+
+/// Parses a map value as a RawConfigValue.
+named!(map_config_value<Span, RawConfigValue>, do_parse!(
+        map_value: alt!(map_with_template | map_no_template) >>
+        (RawConfigValue::Map(map_value))));
 
 /// Parses a list literal.
 named!(config_list<Span, RawConfigValue>, do_parse!(
@@ -63,26 +74,26 @@ named!(config_list<Span, RawConfigValue>, do_parse!(
         tuple!(tokens::opt_whitespace, opt!(char!(',')), tokens::req_list_end) >>
         (RawConfigValue::List{values})));
 
-/// Parses a config value. Valid for assignment values, or values in a list.
+/// Parses a config value. Valid for statement values, or values in a list.
 named!(config_value<Span, RawConfigValue>,
-    // NOTE: This MUST have map_with_template before ref_like, or `from` parsing will fail.
-    alt!(map_with_template | map_no_template | config_list | scalars::number | scalars::string |
-        ref_like));
+    // NOTE: This MUST have map_config_value before ref_like, or `from` parsing will fail.
+    alt!(map_config_value | config_list | scalars::number | scalars::string | ref_like));
 
-/// Parses a config value. Valid for assignment values, or values in a list. Fails with
+/// Parses a config value. Valid for statement values, or values in a list. Fails with
 /// ExpectedValue if item is not a config value.
 named!(req_config_value<Span, RawConfigValue>,
     return_error!(
         // Note that the macro imports ErrorKind from nom, so we need to fully-qualify the parser
-        // symbol below.
-        add_return_error!(NomErrorKind::Custom(super::errors::ErrorKind::ExpectedValue as u32),
-            config_value)));
+        // symbol below. We also use an un-qualified nom ErrorKind to suppress a compiler warning.
+        ErrorKind::Custom(super::errors::ErrorKind::ExpectedValue as u32), config_value));
 
 #[cfg(test)]
 mod tests {
+    use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind};
     use nom::types::CompleteStr;
 
     use super::*;
+    use parser::errors::ErrorKind;
 
     #[test]
     fn config_key_segment_ok_unquoted() {
@@ -200,7 +211,7 @@ mod tests {
         assert_eq!(ok_val.0.fragment, CompleteStr(""));
         assert_eq!(
             ok_val.1,
-            RawConfigValue::Map(RawConfigMap {
+            RawConfigMap {
                 template: Some(ConfigKeyLike {
                     segments: vec![
                         ConfigKeySegment::Quoted(Span::from_values("`foo`", 5, 1)),
@@ -217,7 +228,7 @@ mod tests {
                         value: RawConfigValue::Integer(Span::from_values("1", 21, 1)),
                     },
                 ],
-            })
+            }
         );
     }
 
@@ -228,7 +239,7 @@ mod tests {
         assert_eq!(ok_val.0.fragment, CompleteStr(""));
         assert_eq!(
             ok_val.1,
-            RawConfigValue::Map(RawConfigMap {
+            RawConfigMap {
                 template: None,
                 values: vec![
                     Statement::Assignment {
@@ -248,7 +259,7 @@ mod tests {
                         value: RawConfigValue::Integer(Span::from_values("2", 12, 4)),
                     },
                 ],
-            })
+            }
         );
     }
 }
