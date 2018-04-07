@@ -5,12 +5,12 @@ use std;
 use std::ops::{Range, RangeFrom, RangeFull, RangeTo};
 use std::str::{CharIndices, Chars, FromStr};
 
+use bytecount;
 use memchr;
 use memchr::Memchr;
 use nom::{AsBytes, AtEof, Compare, CompareResult, FindSubstring, FindToken, InputIter,
           InputLength, InputTake, Offset, ParseTo, Slice, UnspecializedInput};
 use nom::types::CompleteStr;
-use bytecount::{naive_num_chars, num_chars};
 
 /// A LocatedSpan is a set of meta information about the location of a token.
 ///
@@ -67,60 +67,13 @@ impl<T: AsBytes> LocatedSpan<T> {
             Some(pos) => pos,
         };
 
-        let mut line_text =
-            String::from_utf8(before_self[self.offset - (column - 1)..].to_vec()).unwrap();
+        let line_start = &before_self[self.offset - (column - 1)..];
+        let mut line_text = String::from_utf8(line_start.to_vec()).unwrap();
         line_text.push_str(&String::from_utf8(self_bytes[..line_end].to_vec()).unwrap());
 
-        (column, line_text)
-    }
+        let char_column = bytecount::naive_num_chars(line_start) + 1;
 
-    fn get_columns_and_bytes_before(&self) -> (usize, &[u8]) {
-        let self_bytes = self.fragment.as_bytes();
-        let self_ptr = self_bytes.as_ptr();
-        let before_self = unsafe {
-            assert!(
-                self.offset <= isize::max_value() as usize,
-                "offset is too big"
-            );
-            let orig_input_ptr = self_ptr.offset(-(self.offset as isize));
-            std::slice::from_raw_parts(orig_input_ptr, self.offset)
-        };
-
-        let column = match memchr::memrchr(b'\n', before_self) {
-            None => self.offset + 1,
-            Some(pos) => self.offset - pos,
-        };
-
-        (column, &before_self[self.offset - (column - 1)..])
-    }
-
-    /// Return the column index, assuming 1 byte = 1 column.
-    ///
-    /// Use it for ascii text, or use get_utf8_column for UTF8.
-    pub fn get_column(&self) -> usize {
-        self.get_columns_and_bytes_before().0
-    }
-
-    /// Return the column index for UTF8 text. Return value is unspecified for non-utf8 text.
-    ///
-    /// This version uses bytecount's hyper algorithm to count characters. This is much faster
-    /// for long lines, but is non-negligibly slower for short slices (below around 100 bytes).
-    /// This is also sped up significantly more depending on architecture and enabling the simd
-    /// feature gates. If you expect primarily short lines, you may get a noticeable speedup in
-    /// parsing by using `naive_get_utf8_column` instead. Benchmark your specific use case!
-    pub fn get_utf8_column(&self) -> usize {
-        let before_self = self.get_columns_and_bytes_before().1;
-        num_chars(before_self) + 1
-    }
-
-    /// Return the column index for UTF8 text. Return value is unspecified for non-utf8 text.
-    ///
-    /// A simpler implementation of `get_utf8_column` that may be faster on shorter lines.
-    /// If benchmarking shows that this is faster, you can use it instead of `get_utf8_column`.
-    /// Prefer defaulting to `get_utf8_column` unless this legitimately is a performance bottleneck.
-    pub fn naive_get_utf8_column(&self) -> usize {
-        let before_self = self.get_columns_and_bytes_before().1;
-        naive_num_chars(before_self) + 1
+        (char_column, line_text)
     }
 }
 
@@ -295,3 +248,42 @@ impl<'a> ToString for LocatedSpan<CompleteStr<'a>> {
 }
 
 impl<'a> UnspecializedInput for LocatedSpan<CompleteStr<'a>> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn span_get_column_and_line_works() {
+        let base = "foo\nbar\ngaz\n";
+        let span = LocatedSpan {
+            fragment: CompleteStr(&base[9..]),
+            offset: 9,
+            line: 3,
+        };
+        let (col, line) = span.get_column_and_line();
+        assert_eq!(col, 2, "get_column_and_line returned bad column");
+        assert_eq!(
+            line,
+            String::from("gaz"),
+            "get_column_and_line returned line"
+        );
+    }
+
+    #[test]
+    fn span_get_column_and_line_works_no_newline() {
+        let base = "fooble";
+        let span = LocatedSpan {
+            fragment: CompleteStr(&base[2..]),
+            offset: 2,
+            line: 1,
+        };
+        let (col, line) = span.get_column_and_line();
+        assert_eq!(col, 3, "get_column_and_line returned bad column");
+        assert_eq!(
+            line,
+            String::from("fooble"),
+            "get_column_and_line returned line"
+        );
+    }
+}
