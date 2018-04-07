@@ -1,8 +1,9 @@
-// Core configuration objects.
+//! Configuration objects. A configuration file is parsed into a single ConfigMap.
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::fmt;
+use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::ops::Deref;
 
 /// A value in a config.
 #[derive(Debug, PartialEq)]
@@ -22,6 +23,11 @@ pub enum ConfigValue {
 }
 
 impl ConfigValue {
+    /// Returns a new empty ConfigMap value.
+    pub fn empty_map() -> ConfigValue {
+        ConfigValue::Map(ConfigMap::empty())
+    }
+
     /// Returns a string representation of the kind of this value.
     fn kind_string(&self) -> String {
         match self {
@@ -32,6 +38,115 @@ impl ConfigValue {
             &ConfigValue::List(_) => String::from("list"),
             &ConfigValue::Map(_) => String::from("map"),
         }
+    }
+
+    /// Gets the given key as a list index.
+    fn to_index(key: &str) -> Result<usize, KeyError> {
+        usize::from_str_radix(key, 10).or_else(|_| {
+            Err(KeyError::new(key.to_string(), KeyErrorKind::BadIndex))
+        })
+    }
+
+    /// Helper for mutable / immatable gets. Uses the given getters for map and list access from the
+    /// config value. Returns an error if the parent item is not a list or map, if the key isn't
+    /// present, or if a list key is not an int.
+    fn get_key_helper<V, M, L>(
+        value: V,
+        key: &str,
+        mut map_getter: M,
+        mut list_getter: L,
+    ) -> Result<V, KeyError>
+    where
+        V: Deref<Target = ConfigValue>,
+        M: FnMut(V, &str) -> Option<V>,
+        L: FnMut(V, usize) -> Option<V>,
+    {
+        match *value {
+            ConfigValue::Map(_) => map_getter(value, key)
+                .ok_or_else(|| KeyError::new(key.to_string(), KeyErrorKind::MissingKey)),
+            ConfigValue::List(_) => ConfigValue::to_index(key).and_then(|index| {
+                list_getter(value, index)
+                    .ok_or_else(|| KeyError::new(key.to_string(), KeyErrorKind::MissingKey))
+            }),
+            _ => Err(KeyError::new(key.to_string(), KeyErrorKind::Dereference)),
+        }
+    }
+
+    /// Gets a reference to the value at the given key literal. Returns an error if this item is not
+    /// a list or map, if the key isn't present, or if a list key is not an int.
+    pub fn get_key(&self, key: &str) -> Result<&ConfigValue, KeyError> {
+        ConfigValue::get_key_helper(
+            self,
+            key,
+            |map, key| match map {
+                &ConfigValue::Map(ref map) => map.values.get(key),
+                _ => panic!("closure should not have been called with non-map"),
+            },
+            |list, index| match list {
+                &ConfigValue::List(ref list) => list.values.get(index),
+                _ => panic!("closure should not have been called with non-list"),
+            },
+        )
+    }
+
+    /// Gets a mutable reference to the value at the given key literal. Returns an error if this
+    /// item is not a list or map, if the key isn't present, or if a list key is not an int.
+    pub fn get_key_mut(&mut self, key: &str) -> Result<&mut ConfigValue, KeyError> {
+        ConfigValue::get_key_helper(
+            self,
+            key,
+            |map, key| match map {
+                &mut ConfigValue::Map(ref mut map) => map.values.get_mut(key),
+                _ => panic!("closure should not have been called with non-map"),
+            },
+            |list, index| match list {
+                &mut ConfigValue::List(ref mut list) => list.values.get_mut(index),
+                _ => panic!("closure should not have been called with non-list"),
+            },
+        )
+    }
+
+    /// Gets a the value stored in the given path, using the given getter function as a helper.
+    /// Returns an error if this value is not a list or map, if the key isn't present, if a list
+    /// key is not an int, or if the path is empty.
+    fn get_path_helper<V, K>(value: V, path: &[&str], mut key_getter: K) -> Result<V, KeyError>
+    where
+        V: Deref<Target = ConfigValue>,
+        K: FnMut(V, &str) -> Result<V, KeyError>,
+    {
+        match path.split_first() {
+            Some((first, rest)) => {
+                let result = key_getter(value, first);
+                if rest.len() == 0 {
+                    result
+                } else {
+                    result
+                        .and_then(|child| {
+                            ConfigValue::get_path_helper(child, rest, key_getter)
+                        })
+                        .or_else(|mut err| {
+                            // Prepend the current key to error path.
+                            err.chain(first);
+                            Err(err)
+                        })
+                }
+            }
+            None => Err(KeyError::new(String::from(""), KeyErrorKind::EmptyKey)),
+        }
+    }
+
+    /// Gets a reference to the value stored in the given path. Returns an error if this value is
+    /// not a list or map, if the key isn't present, if a list key is not an int, or if the path is
+    /// empty.
+    pub fn get_path(&self, path: &[&str]) -> Result<&ConfigValue, KeyError> {
+        ConfigValue::get_path_helper(self, path, ConfigValue::get_key)
+    }
+
+    /// Gets a mutable reference to the value stored in the given path. Returns an error if this
+    /// value is not a list or map, if the key isn't present, if a list key is not an int, or if the
+    /// path is empty.
+    pub fn get_path_mut(&mut self, path: &[&str]) -> Result<&mut ConfigValue, KeyError> {
+        ConfigValue::get_path_helper(self, path, ConfigValue::get_key_mut)
     }
 }
 
@@ -64,25 +179,32 @@ impl KeyError {
             path.push_back(path_elements[i].to_string());
         }
         KeyError {
-            key: path[len - 1].to_string(),
+            key: path_elements[len - 1].to_string(),
             path,
             kind: KeyErrorKind::WrongType { expected, actual },
         }
     }
+
+    /// Chain a key error by appending the given path to the current path.
+    fn chain(&mut self, key: &str) {
+        self.path.push_front(key.to_string());
+    }
 }
 
-impl fmt::Display for KeyError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for KeyError {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let path = join_key(&self.path);
         match self.kind {
             KeyErrorKind::BadIndex => write!(f, "bad index '{}' in list at {}", self.key, path),
             KeyErrorKind::MissingKey => write!(f, "no key \"{}\" found at {}", self.key, path),
+            KeyErrorKind::KeyExists => write!(f, "key \"{}\" already exists at {}", self.key, path),
             KeyErrorKind::Dereference => write!(
                 f,
-                "value {} is a primitive, can't access key \"{}\"",
-                self.key,
-                path
+                "value at {} is a primitive, can't access key \"{}\"",
+                path,
+                self.key
             ),
+            KeyErrorKind::EmptyKey => write!(f, "empty key given"),
             KeyErrorKind::WrongType {
                 ref expected,
                 ref actual,
@@ -105,14 +227,15 @@ pub enum KeyErrorKind {
     BadIndex,
     /// A key wasn't found in a ConfigMap.
     MissingKey,
-    /// The key dereferenced a non-Map type.
+    /// A key being inserted already exists.
+    KeyExists,
+    /// A key dereferenced a non-Map type.
     Dereference,
+    /// A key path was zero-length.
+    EmptyKey,
     /// The key wasn't of the requested type.
     WrongType { expected: String, actual: String },
 }
-
-/// An result of fetching a value from a configuration.
-pub type ConfigResult<'a> = Result<&'a ConfigValue, KeyError>;
 
 /// Helper to split a config key into component parts (on periods).
 fn split_key(key: &str) -> Vec<&str> {
@@ -137,49 +260,6 @@ fn join_key(segments: &VecDeque<String>) -> String {
     }
 }
 
-/// A trait for config values which contain other values (ConfigList and ConfigMap).
-/// Parameterized on the key type.
-trait ConfigContainer<K: ToString> {
-    /// Return the value at the given key, or None if the key doesn't exist in this container.
-    fn get_at_key(&self, key: &K) -> Option<&ConfigValue>;
-
-    /// Return the given path element as a key value.
-    fn str_to_key(element: &str) -> Result<K, KeyError>;
-
-    /// Return the value at the given path.
-    fn get_by_path(&self, path: &[&str]) -> ConfigResult {
-        // Get the value for the first key element.
-        Self::str_to_key(path[0]).and_then(|first_key| match self.get_at_key(&first_key) {
-            // No such key in this collection.
-            None => Err(KeyError::new(
-                first_key.to_string(),
-                KeyErrorKind::MissingKey,
-            )),
-            // No more path elements; item found!
-            Some(value) if path.len() == 1 => Ok(value),
-            // Nested item; recurse. Any new container types will need to be added below.
-            // This is a bad design for extensibility, since it requires enumerating all
-            // implementations of this trait...but is probably fine for this usage.
-            Some(container @ &ConfigValue::Map(_)) | Some(container @ &ConfigValue::List(_)) => {
-                match container {
-                    &ConfigValue::Map(ref value) => value.get_by_path(&path[1..]),
-                    &ConfigValue::List(ref value) => value.get_by_path(&path[1..]),
-                    _ => unreachable!(),
-                }.or_else(|mut err| {
-                    // Prepend the current key to error path.
-                    err.path.push_front(first_key.to_string());
-                    Err(err)
-                })
-            }
-            // More path elements, but item is not a container.
-            _ => Err(KeyError::new(
-                first_key.to_string(),
-                KeyErrorKind::Dereference,
-            )),
-        })
-    }
-}
-
 /// A list parsed from a config. This can be converted into a list of homogenous types, or be
 /// accessed by index.
 #[derive(Debug, PartialEq)]
@@ -187,25 +267,14 @@ pub struct ConfigList {
     values: Vec<ConfigValue>,
 }
 
-impl ConfigContainer<usize> for ConfigList {
-    fn get_at_key(&self, key: &usize) -> Option<&ConfigValue> {
-        self.values.get(*key)
-    }
-
-    fn str_to_key(element: &str) -> Result<usize, KeyError> {
-        usize::from_str_radix(element, 10).or_else(|_| {
-            Err(KeyError::new(element.to_string(), KeyErrorKind::BadIndex))
-        })
-    }
-}
-
 impl ConfigList {
+    /// Returns an new empty ConfigList.
     pub fn empty() -> ConfigList {
         ConfigList { values: vec![] }
     }
 
     /// Return the value at the given index.
-    pub fn get(&self, index: usize) -> ConfigResult {
+    pub fn get(&self, index: usize) -> Result<&ConfigValue, KeyError> {
         self.values
             .get(index)
             .ok_or_else(|| KeyError::new(index.to_string(), KeyErrorKind::BadIndex))
@@ -224,19 +293,9 @@ pub struct ConfigMap {
     values: HashMap<String, ConfigValue>,
 }
 
-impl ConfigContainer<String> for ConfigMap {
-    fn get_at_key(&self, key: &String) -> Option<&ConfigValue> {
-        self.values.get(key)
-    }
-
-    fn str_to_key(element: &str) -> Result<String, KeyError> {
-        Ok(element.to_string())
-    }
-}
-
 /// A full configuration.
 impl ConfigMap {
-    /// Returns a new empty map.
+    /// Returns a new empty ConfigMap.
     pub fn empty() -> ConfigMap {
         ConfigMap {
             values: HashMap::new(),
@@ -244,81 +303,142 @@ impl ConfigMap {
     }
 
     /// Return the value at the given key.
-    pub fn get(&self, key: &str) -> ConfigResult {
+    pub fn get(&self, key: &str) -> Result<&ConfigValue, KeyError> {
         let full_path = split_key(key);
-        self.get_by_path(&full_path)
+        let (first, rest) = full_path.split_first().unwrap();
+        match self.values.get(*first) {
+            Some(value) if rest.len() == 0 => Ok(value),
+            Some(value) => value.get_path(rest).or_else(|mut err| {
+                // Prepend the current key to error path.
+                err.chain(first);
+                Err(err)
+            }),
+            None => Err(KeyError::new(first.to_string(), KeyErrorKind::MissingKey)),
+        }
     }
 
-    pub fn insert(&mut self, key: &str, value: ConfigValue) {
-        self.values.insert(key.to_string(), value);
+    /// Inserts a new value at the given key, returning an error if the key was bad.
+    pub fn insert(&mut self, key: &str, value: ConfigValue) -> Result<(), KeyError> {
+        let full_path = split_key(key);
+        self.insert_at_path(&full_path, value)
     }
 
+    /// Inserts a new value at the given path, returning an error if the path was bad.
+    pub fn insert_at_path(&mut self, path: &[&str], value: ConfigValue) -> Result<(), KeyError> {
+        path.split_first()
+            .map(|(first, rest)| {
+                if self.values.contains_key(*first) {
+                    match self.values.get_mut(*first).unwrap() {
+                        // Last path item, but key already exists.
+                        _ if rest.len() == 0 => {
+                            Err(KeyError::new(first.to_string(), KeyErrorKind::KeyExists))
+                        }
+                        // ConfigMap; recursive insert.
+                        &mut ConfigValue::Map(ref mut map) => {
+                            map.insert_at_path(&rest, value).or_else(|mut err| {
+                                // Prepend the current key to error path.
+                                err.path.push_front(first.to_string());
+                                Err(err)
+                            })
+                        }
+                        // Non-map; dereference error.
+                        _ => Err(KeyError::new(first.to_string(), KeyErrorKind::Dereference)),
+                    }
+                } else {
+                    // No value; last path item.
+                    if rest.len() == 0 {
+                        self.values.insert(first.to_string(), value);
+                        Ok(())
+                    } else {
+                        // No value; recursive insert.
+                        let mut new_map = ConfigMap::empty();
+                        new_map.insert_at_path(&rest, value).map(|_| {
+                            self.values
+                                .insert(first.to_string(), ConfigValue::Map(new_map));
+                        })
+                    }
+                }
+            })
+            .unwrap_or_else(|| {
+                Err(KeyError::new(String::from(""), KeyErrorKind::EmptyKey))
+            })
+    }
+
+    /// Gets the bool value at the given key, returning an error if the key was bad or if the value
+    /// at the key was not a bool.
     pub fn get_bool(&self, key: &str) -> Result<bool, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
+        self.get(key).and_then(|value| match value {
             &ConfigValue::Bool(v) => Ok(v),
             _ => Err(KeyError::wrong_type(
                 String::from("bool"),
                 value.kind_string(),
-                &full_path,
-            )),
-        })
-    }
-    pub fn get_string(&self, key: &str) -> Result<&String, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
-            &ConfigValue::String(ref v) => Ok(v),
-            _ => Err(KeyError::wrong_type(
-                String::from("string"),
-                value.kind_string(),
-                &full_path,
-            )),
-        })
-    }
-    pub fn get_int(&self, key: &str) -> Result<i32, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
-            &ConfigValue::Int(v) => Ok(v),
-            _ => Err(KeyError::wrong_type(
-                String::from("int"),
-                value.kind_string(),
-                &full_path,
+                &split_key(key),
             )),
         })
     }
 
-    /// Returns the float value at the given key. This will automatically convert integer values.
+    /// Gets the String value at the given key, returning an error if the key was bad or if the
+    /// value at the key was not a String.
+    pub fn get_string(&self, key: &str) -> Result<&String, KeyError> {
+        self.get(key).and_then(|value| match value {
+            &ConfigValue::String(ref v) => Ok(v),
+            _ => Err(KeyError::wrong_type(
+                String::from("string"),
+                value.kind_string(),
+                &split_key(key),
+            )),
+        })
+    }
+
+    /// Gets the int value at the given key, returning an error if the key was bad or if the
+    /// value at the key was not an int.
+    pub fn get_int(&self, key: &str) -> Result<i32, KeyError> {
+        self.get(key).and_then(|value| match value {
+            &ConfigValue::Int(v) => Ok(v),
+            _ => Err(KeyError::wrong_type(
+                String::from("int"),
+                value.kind_string(),
+                &split_key(key),
+            )),
+        })
+    }
+
+    /// Gets the float value at the given key, automatically converting integers to floats, and
+    /// returning an error if the key was bad or if the value at the key was not a number.
     pub fn get_float(&self, key: &str) -> Result<f64, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
+        self.get(&key).and_then(|value| match value {
             &ConfigValue::Int(v) => Ok(f64::from(v)),
             &ConfigValue::Float(v) => Ok(v),
             _ => Err(KeyError::wrong_type(
                 String::from("float"),
                 value.kind_string(),
-                &full_path,
+                &split_key(key),
             )),
         })
     }
+
+    /// Gets the list value at the given key, returning an error if the key was bad or if the
+    /// value at the key was not a list.
     pub fn get_list(&self, key: &str) -> Result<&ConfigList, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
+        self.get(key).and_then(|value| match value {
             &ConfigValue::List(ref v) => Ok(v),
             _ => Err(KeyError::wrong_type(
                 String::from("list"),
                 value.kind_string(),
-                &full_path,
+                &split_key(key),
             )),
         })
     }
+
+    /// Gets the map value at the given key, returning an error if the key was bad or if the
+    /// value at the key was not a map.
     pub fn get_map(&self, key: &str) -> Result<&ConfigMap, KeyError> {
-        let full_path = split_key(key);
-        self.get_by_path(&full_path).and_then(|value| match value {
+        self.get(key).and_then(|value| match value {
             &ConfigValue::Map(ref v) => Ok(v),
             _ => Err(KeyError::wrong_type(
                 String::from("map"),
                 value.kind_string(),
-                &full_path,
+                &split_key(key),
             )),
         })
     }
@@ -331,22 +451,23 @@ mod tests {
     #[test]
     fn get_missing_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true));
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
         let result = map.get("foo");
         assert_eq!(result.err().map(|e| e.kind), Some(KeyErrorKind::MissingKey));
     }
 
     #[test]
-    fn get_bad_key() {
+    fn get_bad_deref() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true));
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
         let result = map.get("test.it");
         assert_eq!(
             result.err(),
-            Some(KeyError::new(
-                String::from("test"),
-                KeyErrorKind::Dereference
-            ))
+            Some(KeyError {
+                key: String::from("it"),
+                path: VecDeque::from(vec![String::from("test")]),
+                kind: KeyErrorKind::Dereference,
+            })
         );
     }
 
@@ -354,7 +475,7 @@ mod tests {
     fn get_bad_subkey() {
         let child_map = ConfigMap::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Map(child_map));
+        map.insert("test", ConfigValue::Map(child_map)).unwrap();
         let result = map.get("test.it");
         assert_eq!(
             result.err(),
@@ -369,60 +490,179 @@ mod tests {
     #[test]
     fn get_existing_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true));
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
         let result = map.get("test");
         assert_eq!(result.unwrap(), &ConfigValue::Bool(true));
     }
 
     #[test]
-    fn get_bool() {
+    fn get_nested_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true));
+        map.insert("test.it.now", ConfigValue::Bool(true)).unwrap();
+
+        let mut first_nested_map = ConfigMap::empty();
+        first_nested_map
+            .insert("it.now", ConfigValue::Bool(true))
+            .unwrap();
+        assert_eq!(map.get_map("test").unwrap(), &first_nested_map);
+
+        let mut second_nested_map = ConfigMap::empty();
+        second_nested_map
+            .insert("now", ConfigValue::Bool(true))
+            .unwrap();
+        assert_eq!(map.get_map("test.it").unwrap(), &second_nested_map);
+
+        assert_eq!(map.get("test.it.now").unwrap(), &ConfigValue::Bool(true));
+    }
+
+    #[test]
+    fn get_bool_ok() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
         let result = map.get_bool("test");
         assert_eq!(result.unwrap(), true);
     }
 
     #[test]
-    fn get_string() {
+    fn get_bool_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::String(String::from("value")));
+        map.insert("test", ConfigValue::Int(1)).unwrap();
+        let result = map.get_bool("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("bool"),
+                String::from("int"),
+                &["test"]
+            ))
+        );
+    }
+
+    #[test]
+    fn get_string_ok() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::String(String::from("value")))
+            .unwrap();
         let result = map.get_string("test");
         assert_eq!(*result.unwrap(), String::from("value"));
     }
 
     #[test]
-    fn get_int() {
+    fn get_string_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Int(123));
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        let result = map.get_string("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("string"),
+                String::from("bool"),
+                &["test"]
+            ))
+        );
+    }
+
+    #[test]
+    fn get_int_ok() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Int(123)).unwrap();
         let result = map.get_int("test");
         assert_eq!(result.unwrap(), 123);
     }
 
     #[test]
-    fn get_float() {
+    fn get_int_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Float(1.5));
+        map.insert("test", ConfigValue::Float(123.5)).unwrap();
+        let result = map.get_int("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("int"),
+                String::from("float"),
+                &["test"]
+            ))
+        );
+    }
+
+    #[test]
+    fn get_float_ok() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Float(1.5)).unwrap();
         let result = map.get_float("test");
         assert_eq!(result.unwrap(), 1.5);
     }
 
     #[test]
-    fn get_list() {
+    fn get_float_ok_int() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Int(1)).unwrap();
+        let result = map.get_float("test");
+        assert_eq!(result.unwrap(), 1.0);
+    }
+
+    #[test]
+    fn get_float_err() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Map(ConfigMap::empty()))
+            .unwrap();
+        let result = map.get_float("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("float"),
+                String::from("map"),
+                &["test"]
+            ))
+        );
+    }
+
+    #[test]
+    fn get_list_ok() {
         let child_list = ConfigList::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::List(child_list));
+        map.insert("test", ConfigValue::List(child_list)).unwrap();
         let result = map.get_list("test");
         assert_eq!(*result.unwrap(), ConfigList::empty());
     }
 
     #[test]
-    fn get_map() {
+    fn get_list_err() {
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        let result = map.get_list("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("list"),
+                String::from("bool"),
+                &["test"]
+            ))
+        );
+    }
+
+    #[test]
+    fn get_map_ok() {
         let child_map = ConfigMap::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Map(child_map));
+        map.insert("test", ConfigValue::Map(child_map)).unwrap();
         let result = map.get_map("test");
         assert_eq!(*result.unwrap(), ConfigMap::empty());
     }
 
-    // TODO(jkinkead): Tests for bad values fetched using get_* methods.
+    #[test]
+    fn get_map_err() {
+        let child_list = ConfigList::empty();
+        let mut map = ConfigMap::empty();
+        map.insert("test", ConfigValue::List(child_list)).unwrap();
+        let result = map.get_map("test");
+        assert_eq!(
+            result,
+            Err(KeyError::wrong_type(
+                String::from("map"),
+                String::from("list"),
+                &["test"]
+            ))
+        );
+    }
 }
