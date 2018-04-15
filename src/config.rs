@@ -313,7 +313,7 @@ impl ConfigMap {
 
     /// Inserts a new value at the given path, overwriting any existing value. Panics if given an
     /// empty path, or if the path is already set.
-    #[test]
+    #[cfg(test)]
     fn insert(&mut self, path: &Vec<&str>, value: ConfigValue) {
         match path.split_first() {
             Some((first, rest)) => {
