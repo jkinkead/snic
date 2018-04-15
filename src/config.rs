@@ -194,7 +194,6 @@ impl Display for KeyError {
         match self.kind {
             KeyErrorKind::BadIndex => write!(f, "bad index '{}' in list at {}", self.key, path),
             KeyErrorKind::MissingKey => write!(f, "no key \"{}\" found at {}", self.key, path),
-            KeyErrorKind::KeyExists => write!(f, "key \"{}\" already exists at {}", self.key, path),
             KeyErrorKind::Dereference => write!(
                 f,
                 "value at {} is a primitive, can't access key \"{}\"",
@@ -224,8 +223,6 @@ pub enum KeyErrorKind {
     BadIndex,
     /// A key wasn't found in a ConfigMap.
     MissingKey,
-    /// A key being inserted already exists.
-    KeyExists,
     /// A key dereferenced a non-Map type.
     Dereference,
     /// A key path was zero-length.
