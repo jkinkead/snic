@@ -4,10 +4,9 @@ extern crate memchr;
 extern crate nom;
 
 mod config;
-mod input;
 mod load;
-mod located;
 mod parser;
 
 pub use self::config::*;
 pub use self::load::load;
+pub use self::load::Error as LoadError;

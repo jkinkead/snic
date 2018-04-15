@@ -1,6 +1,6 @@
-extern crate snc;
-
 use std::env;
+
+extern crate snc;
 
 fn main() {
     // TODO: Use getopts (https://doc.rust-lang.org/getopts/getopts/struct.Options.html) for
@@ -18,6 +18,6 @@ fn main() {
     match snc::load(args[1].clone()) {
         // TODO: Implement display for ConfigMap; print.
         Ok(config) => println!("Parsed fine: {:?}", config),
-        Err(e) => println!("Did not parse fine: {:?}", e),
+        Err(e) => println!("Did not parse: {}", e),
     }
 }

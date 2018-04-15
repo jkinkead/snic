@@ -1,10 +1,10 @@
 //! `tokens` contains parsers for simple syntax items. These produce Span values rather than more
 //! complicated data structures.
 
-use input::Span;
-use parser::errors::ErrorKind;
-
 use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind, IResult};
+
+use parser::errors::ErrorKind;
+use parser::input::Span;
 
 // Naming conventions:
 // req_ prefix means the method will hard-fail if unmatched (nom::Err::Failure).

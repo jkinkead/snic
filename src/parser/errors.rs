@@ -1,11 +1,11 @@
 use nom::{Context, Err as NomErr, ErrorKind as NomErrorKind};
 
-use input::Span;
+use parser::input::Span;
 
-/// Error during parsing.
+/// Error during first-pass parsing, encapsulating the location the error happened.
 pub struct Error<'a> {
     kind: ErrorKind,
-    span: Span<'a>,
+    pub span: Span<'a>,
 }
 
 impl<'a> Error<'a> {
@@ -17,29 +17,17 @@ impl<'a> Error<'a> {
     pub fn short_message(&self) -> String {
         match self.kind {
             ErrorKind::BadKey => String::from("illegal config key"),
+            ErrorKind::ExpectedAssignment => String::from("expected assignment"),
             ErrorKind::ExpectedAssignmentOrMapEnd => String::from("expected '}' or assignment"),
             ErrorKind::ExpectedEquals => String::from("expected '='"),
+            ErrorKind::ExpectedImportOrAssignment => String::from("expected import or assignment"),
             ErrorKind::ExpectedMapStart => String::from("expected '{'"),
-            ErrorKind::ExpectedStatement => String::from("expected start of statement"),
             ErrorKind::ExpectedValue => String::from("expected config value"),
             ErrorKind::ExpectedValueOrListEnd => String::from("expected ']' or config value"),
             ErrorKind::MalformedNumber => String::from("malformed number"),
             ErrorKind::UnterminatedString => String::from("unterminated string"),
-            _ => String::from("unknown parse error"),
+            ErrorKind::Unknown => String::from("unknown parse error"),
         }
-    }
-
-    /// Returns a detailed message about the location of the error.
-    // TODO: Add filename below.
-    pub fn location(&self) -> String {
-        let (column, line) = self.span.get_column_and_line();
-        String::from(format!(
-            "at {}:{}\n{}\n{}^\n",
-            self.span.line,
-            column,
-            line,
-            " ".repeat(column - 1)
-        ))
     }
 }
 
@@ -68,24 +56,26 @@ pub enum ErrorKind {
     // NOTE: Values must be kept in sync with From<u32> implementation.
     /// A key was definied with an illegal name.
     BadKey = 0,
+    /// Expected another assignment in the file.
+    ExpectedAssignment,
     /// Expected another assignment or a map end.
-    ExpectedAssignmentOrMapEnd = 1,
+    ExpectedAssignmentOrMapEnd,
     /// Equals was required but missing.
-    ExpectedEquals = 2,
+    ExpectedEquals,
+    /// Expected another import or assignment.
+    ExpectedImportOrAssignment,
     /// Start-of-map (`{`) was required but missing.
-    ExpectedMapStart = 3,
-    /// Expected another statement in the file.
-    ExpectedStatement = 4,
+    ExpectedMapStart,
     /// Expected a value, but got something else.
-    ExpectedValue = 5,
+    ExpectedValue,
     /// Expected another item or a list end.
-    ExpectedValueOrListEnd = 6,
+    ExpectedValueOrListEnd,
     /// Number could not be parsed.
-    MalformedNumber = 7,
+    MalformedNumber,
     /// A string wasn't terminated.
-    UnterminatedString = 8,
+    UnterminatedString,
     /// Unknown error code passed from a parser. Should not be returned.
-    Unknown = 999,
+    Unknown,
 }
 
 // Required implementation for fix_error, used to make nom integration less painful.
@@ -94,14 +84,15 @@ impl From<u32> for ErrorKind {
     fn from(i: u32) -> Self {
         match i {
             0 => ErrorKind::BadKey,
-            1 => ErrorKind::ExpectedAssignmentOrMapEnd,
-            2 => ErrorKind::ExpectedEquals,
-            3 => ErrorKind::ExpectedMapStart,
-            4 => ErrorKind::ExpectedStatement,
-            5 => ErrorKind::ExpectedValue,
-            6 => ErrorKind::ExpectedValueOrListEnd,
-            7 => ErrorKind::MalformedNumber,
-            8 => ErrorKind::UnterminatedString,
+            1 => ErrorKind::ExpectedAssignment,
+            2 => ErrorKind::ExpectedAssignmentOrMapEnd,
+            3 => ErrorKind::ExpectedEquals,
+            4 => ErrorKind::ExpectedImportOrAssignment,
+            5 => ErrorKind::ExpectedMapStart,
+            6 => ErrorKind::ExpectedValue,
+            7 => ErrorKind::ExpectedValueOrListEnd,
+            8 => ErrorKind::MalformedNumber,
+            9 => ErrorKind::UnterminatedString,
             _ => ErrorKind::Unknown,
         }
     }

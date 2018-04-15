@@ -1,6 +1,6 @@
 //! Types used in parsing a config document. This is what the first-pass parser generates.
 
-use input::Span;
+use parser::input::Span;
 
 /// A full config document for a single file.
 pub struct Document<'a> {
@@ -22,6 +22,15 @@ pub enum ConfigKeySegment<'a> {
     Quoted(Span<'a>),
     /// An unquoted key segment.
     Unquoted(Span<'a>),
+}
+
+impl<'a> ConfigKeySegment<'a> {
+    pub fn span(&self) -> &Span {
+        match self {
+            &ConfigKeySegment::Quoted(ref span) => span,
+            &ConfigKeySegment::Unquoted(ref span) => span,
+        }
+    }
 }
 
 /// Import line in a document.
@@ -70,4 +79,10 @@ pub enum RawConfigValue<'a> {
     List { values: Vec<RawConfigValue<'a>> },
     /// A reference to another key, or a literal token.
     RefLike(ConfigKeyLike<'a>),
+    /// True literal.
+    True(Span<'a>),
+    /// False literal.
+    False(Span<'a>),
+    /// Undefined literal.
+    Undefined(Span<'a>),
 }

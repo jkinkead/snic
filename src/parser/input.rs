@@ -2,12 +2,12 @@
 
 use nom::types::CompleteStr;
 
-use located::LocatedSpan;
+use parser::located::LocatedSpan;
 
 /// The input type used for the parser.
 pub type Span<'a> = LocatedSpan<CompleteStr<'a>>;
 
-/// Wraps a string slice, for ease of testing.
+/// Wraps a string slice.
 impl<'a> From<&'a str> for Span<'a> {
     fn from(from: &str) -> Span {
         Span::new(CompleteStr(from))
@@ -23,5 +23,22 @@ impl<'a> Span<'a> {
             offset,
             line,
         }
+    }
+
+    /// Create a detailed location string for this span.
+    pub fn location(&self) -> String {
+        let (column, line) = self.get_column_and_line();
+        String::from(format!(
+            "{}:{}\n{}\n{}^\n",
+            self.line,
+            column,
+            line,
+            " ".repeat(column - 1)
+        ))
+    }
+
+    /// Return the wrapped string.
+    pub fn as_str(&self) -> &str {
+        self.fragment.0
     }
 }

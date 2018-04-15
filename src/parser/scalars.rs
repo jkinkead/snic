@@ -1,13 +1,13 @@
 //! `scalars` contains parsers for number and string values in a config file. All public methods
 //! produce instances of RawConfigValue.
 
-use input::Span;
-use parser::errors::ErrorKind;
-use parser::tokens::escaped_chars;
-use parser::types::RawConfigValue;
-
 use nom;
 use nom::IResult;
+
+use parser::errors::ErrorKind;
+use parser::input::Span;
+use parser::tokens::escaped_chars;
+use parser::types::RawConfigValue;
 
 // Naming conventions:
 // req_ prefix means the method will hard-fail if unmatched (nom::Err::Failure).

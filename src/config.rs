@@ -23,11 +23,6 @@ pub enum ConfigValue {
 }
 
 impl ConfigValue {
-    /// Returns a new empty ConfigMap value.
-    pub fn empty_map() -> ConfigValue {
-        ConfigValue::Map(ConfigMap::empty())
-    }
-
     /// Returns a string representation of the kind of this value.
     fn kind_string(&self) -> String {
         match self {
@@ -50,6 +45,7 @@ impl ConfigValue {
     /// Helper for mutable / immatable gets. Uses the given getters for map and list access from the
     /// config value. Returns an error if the parent item is not a list or map, if the key isn't
     /// present, or if a list key is not an int.
+    #[inline]
     fn get_key_helper<V, M, L>(
         value: V,
         key: &str,
@@ -109,6 +105,7 @@ impl ConfigValue {
     /// Gets a the value stored in the given path, using the given getter function as a helper.
     /// Returns an error if this value is not a list or map, if the key isn't present, if a list
     /// key is not an int, or if the path is empty.
+    #[inline]
     fn get_path_helper<V, K>(value: V, path: &[&str], mut key_getter: K) -> Result<V, KeyError>
     where
         V: Deref<Target = ConfigValue>,
@@ -317,51 +314,29 @@ impl ConfigMap {
         }
     }
 
-    /// Inserts a new value at the given key, returning an error if the key was bad.
-    pub fn insert(&mut self, key: &str, value: ConfigValue) -> Result<(), KeyError> {
-        let full_path = split_key(key);
-        self.insert_at_path(&full_path, value)
-    }
-
-    /// Inserts a new value at the given path, returning an error if the path was bad.
-    pub fn insert_at_path(&mut self, path: &[&str], value: ConfigValue) -> Result<(), KeyError> {
-        path.split_first()
-            .map(|(first, rest)| {
+    /// Inserts a new value at the given path, overwriting any existing value. Panics if given an
+    /// empty path, or if the path is already set.
+    #[test]
+    fn insert(&mut self, path: &Vec<&str>, value: ConfigValue) {
+        match path.split_first() {
+            Some((first, rest)) => {
                 if self.values.contains_key(*first) {
-                    match self.values.get_mut(*first).unwrap() {
-                        // Last path item, but key already exists.
-                        _ if rest.len() == 0 => {
-                            Err(KeyError::new(first.to_string(), KeyErrorKind::KeyExists))
-                        }
-                        // ConfigMap; recursive insert.
-                        &mut ConfigValue::Map(ref mut map) => {
-                            map.insert_at_path(&rest, value).or_else(|mut err| {
-                                // Prepend the current key to error path.
-                                err.path.push_front(first.to_string());
-                                Err(err)
-                            })
-                        }
-                        // Non-map; dereference error.
-                        _ => Err(KeyError::new(first.to_string(), KeyErrorKind::Dereference)),
-                    }
+                    panic!("a value already exists for key {}", first);
                 } else {
                     // No value; last path item.
                     if rest.len() == 0 {
                         self.values.insert(first.to_string(), value);
-                        Ok(())
                     } else {
                         // No value; recursive insert.
                         let mut new_map = ConfigMap::empty();
-                        new_map.insert_at_path(&rest, value).map(|_| {
-                            self.values
-                                .insert(first.to_string(), ConfigValue::Map(new_map));
-                        })
+                        new_map.insert(&rest.to_vec(), value);
+                        self.values
+                            .insert(first.to_string(), ConfigValue::Map(new_map));
                     }
                 }
-            })
-            .unwrap_or_else(|| {
-                Err(KeyError::new(String::from(""), KeyErrorKind::EmptyKey))
-            })
+            }
+            None => panic!("insert called with empty path"),
+        }
     }
 
     /// Gets the bool value at the given key, returning an error if the key was bad or if the value
@@ -451,7 +426,7 @@ mod tests {
     #[test]
     fn get_missing_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get("foo");
         assert_eq!(result.err().map(|e| e.kind), Some(KeyErrorKind::MissingKey));
     }
@@ -459,7 +434,7 @@ mod tests {
     #[test]
     fn get_bad_deref() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get("test.it");
         assert_eq!(
             result.err(),
@@ -475,7 +450,7 @@ mod tests {
     fn get_bad_subkey() {
         let child_map = ConfigMap::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Map(child_map)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Map(child_map));
         let result = map.get("test.it");
         assert_eq!(
             result.err(),
@@ -490,7 +465,7 @@ mod tests {
     #[test]
     fn get_existing_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get("test");
         assert_eq!(result.unwrap(), &ConfigValue::Bool(true));
     }
@@ -498,18 +473,14 @@ mod tests {
     #[test]
     fn get_nested_key() {
         let mut map = ConfigMap::empty();
-        map.insert("test.it.now", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test", "it", "now"], ConfigValue::Bool(true));
 
         let mut first_nested_map = ConfigMap::empty();
-        first_nested_map
-            .insert("it.now", ConfigValue::Bool(true))
-            .unwrap();
+        first_nested_map.insert(&vec!["it", "now"], ConfigValue::Bool(true));
         assert_eq!(map.get_map("test").unwrap(), &first_nested_map);
 
         let mut second_nested_map = ConfigMap::empty();
-        second_nested_map
-            .insert("now", ConfigValue::Bool(true))
-            .unwrap();
+        second_nested_map.insert(&vec!["now"], ConfigValue::Bool(true));
         assert_eq!(map.get_map("test.it").unwrap(), &second_nested_map);
 
         assert_eq!(map.get("test.it.now").unwrap(), &ConfigValue::Bool(true));
@@ -518,7 +489,7 @@ mod tests {
     #[test]
     fn get_bool_ok() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get_bool("test");
         assert_eq!(result.unwrap(), true);
     }
@@ -526,7 +497,7 @@ mod tests {
     #[test]
     fn get_bool_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Int(1)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Int(1));
         let result = map.get_bool("test");
         assert_eq!(
             result,
@@ -541,8 +512,7 @@ mod tests {
     #[test]
     fn get_string_ok() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::String(String::from("value")))
-            .unwrap();
+        map.insert(&vec!["test"], ConfigValue::String(String::from("value")));
         let result = map.get_string("test");
         assert_eq!(*result.unwrap(), String::from("value"));
     }
@@ -550,7 +520,7 @@ mod tests {
     #[test]
     fn get_string_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get_string("test");
         assert_eq!(
             result,
@@ -565,7 +535,7 @@ mod tests {
     #[test]
     fn get_int_ok() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Int(123)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Int(123));
         let result = map.get_int("test");
         assert_eq!(result.unwrap(), 123);
     }
@@ -573,7 +543,7 @@ mod tests {
     #[test]
     fn get_int_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Float(123.5)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Float(123.5));
         let result = map.get_int("test");
         assert_eq!(
             result,
@@ -588,7 +558,7 @@ mod tests {
     #[test]
     fn get_float_ok() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Float(1.5)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Float(1.5));
         let result = map.get_float("test");
         assert_eq!(result.unwrap(), 1.5);
     }
@@ -596,7 +566,7 @@ mod tests {
     #[test]
     fn get_float_ok_int() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Int(1)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Int(1));
         let result = map.get_float("test");
         assert_eq!(result.unwrap(), 1.0);
     }
@@ -604,8 +574,7 @@ mod tests {
     #[test]
     fn get_float_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Map(ConfigMap::empty()))
-            .unwrap();
+        map.insert(&vec!["test"], ConfigValue::Map(ConfigMap::empty()));
         let result = map.get_float("test");
         assert_eq!(
             result,
@@ -621,7 +590,7 @@ mod tests {
     fn get_list_ok() {
         let child_list = ConfigList::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::List(child_list)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::List(child_list));
         let result = map.get_list("test");
         assert_eq!(*result.unwrap(), ConfigList::empty());
     }
@@ -629,7 +598,7 @@ mod tests {
     #[test]
     fn get_list_err() {
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Bool(true)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Bool(true));
         let result = map.get_list("test");
         assert_eq!(
             result,
@@ -645,7 +614,7 @@ mod tests {
     fn get_map_ok() {
         let child_map = ConfigMap::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::Map(child_map)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::Map(child_map));
         let result = map.get_map("test");
         assert_eq!(*result.unwrap(), ConfigMap::empty());
     }
@@ -654,7 +623,7 @@ mod tests {
     fn get_map_err() {
         let child_list = ConfigList::empty();
         let mut map = ConfigMap::empty();
-        map.insert("test", ConfigValue::List(child_list)).unwrap();
+        map.insert(&vec!["test"], ConfigValue::List(child_list));
         let result = map.get_map("test");
         assert_eq!(
             result,

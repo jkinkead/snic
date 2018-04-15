@@ -1,7 +1,7 @@
 //! The main value parsers for the first-pass parser. This contains rules for building non-scalar
 //! config types, as well as processing syntax items.
 
-use input::Span;
+use parser::input::Span;
 use parser::scalars;
 use parser::tokens;
 use parser::types::{ConfigKeyLike, ConfigKeySegment, RawConfigMap, RawConfigValue, Statement};
@@ -22,7 +22,23 @@ named!(pub config_key_like<Span, ConfigKeyLike>, map!(separated_nonempty_list!(
 /// Parses a RefLike value (key reference or single-token literal).
 named!(ref_like<Span, RawConfigValue>, map!(
     config_key_like,
-    |value| RawConfigValue::RefLike(value)));
+    |value| {
+        if value.segments.len() == 1 {
+            match value.segments[0] {
+                ConfigKeySegment::Quoted(_) => RawConfigValue::RefLike(value),
+                ConfigKeySegment::Unquoted(span) => {
+                    match span.fragment.0 {
+                        "true" => RawConfigValue::True(span),
+                        "false" => RawConfigValue::False(span),
+                        "undefined" => RawConfigValue::Undefined(span),
+                        _ => RawConfigValue::RefLike(value),
+                    }
+                }
+            }
+        } else {
+            RawConfigValue::RefLike(value)
+        }
+    }));
 
 named!(template<Span, Statement>, do_parse!(
         tag!("template") >> value!((), tokens::whitespace) >>

@@ -1,9 +1,10 @@
 //! The entrypoint for the first-pass parser.
 
-use input::Span;
 use nom::InputLength;
+
 use parser::config;
 use parser::errors::{Error, ErrorKind};
+use parser::input::Span;
 use parser::tokens;
 use parser::types::{Document, Import};
 
@@ -27,12 +28,17 @@ named!(document<Span, Document>, do_parse!(
 
 
 /// Does a first-pass parse of the given config string.
-pub fn load<'a>(config_string: Span<'a>) -> Result<Document<'a>, Error> {
-    document(config_string)
+pub fn load<'a>(config_string: &'a str) -> Result<Document<'a>, Error> {
+    let input = Span::from(config_string);
+    document(input)
         .map_err(|e| Error::from(e))
         .and_then(|(rest, document)| {
             if rest.input_len() > 0 {
-                Err(Error::new(ErrorKind::ExpectedStatement, rest))
+                if document.statements.len() > 0 {
+                    Err(Error::new(ErrorKind::ExpectedAssignment, rest))
+                } else {
+                    Err(Error::new(ErrorKind::ExpectedImportOrAssignment, rest))
+                }
             } else {
                 Ok(document)
             }
